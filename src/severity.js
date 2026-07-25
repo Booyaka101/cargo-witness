@@ -1,0 +1,54 @@
+'use strict';
+
+/**
+ * Severity for each finding flag. Drives report colouring, --fail-on gating and
+ * SARIF `level`.
+ *   high   → strong tamper signal (build.rs / binary / checksum)
+ *   medium → source divergence from git (content or unexpected file)
+ *   info   → advisory (yanked)
+ */
+const SEVERITY = {
+  CHECKSUM_MISMATCH: 'high',
+  BUILD_RS_INJECTED: 'high',
+  BUILD_RS_MODIFIED: 'high',
+  BINARY_NOT_IN_GIT: 'high',
+  SOURCE_MODIFIED: 'medium',
+  FILE_NOT_IN_GIT: 'medium',
+  VCS_MISMATCH: 'info',      // self-reported commit ≠ attested commit
+  TRUSTED_PUBLISH: 'info',   // positive: published via OIDC Trusted Publishing
+  YANKED: 'info',
+};
+
+const RANK = { info: 0, medium: 1, high: 2 };
+
+function severityOf(flag) {
+  const name = typeof flag === 'string' ? flag : flag.flag;
+  return SEVERITY[name] || 'medium';
+}
+
+/** Highest severity among a list of flags, or null if none. */
+function maxSeverity(flags) {
+  let best = null;
+  for (const f of flags || []) {
+    const s = severityOf(f);
+    if (best === null || RANK[s] > RANK[best]) best = s;
+  }
+  return best;
+}
+
+/** True if `sev` meets or exceeds the `threshold` (e.g. gate at 'medium'). */
+function atLeast(sev, threshold) {
+  if (!sev) return false;
+  return RANK[sev] >= RANK[threshold];
+}
+
+/**
+ * A finding is "suspicious" (recorded status SUSPICIOUS) if it has any flag of
+ * severity >= medium. Info-only findings (e.g. YANKED alone) stay CLEAN but the
+ * flag is still recorded and surfaced.
+ */
+function isSuspicious(flags) {
+  return atLeast(maxSeverity(flags), 'medium');
+}
+
+module.exports = { SEVERITY, RANK, severityOf, maxSeverity, atLeast, isSuspicious };

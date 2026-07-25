@@ -1,0 +1,35 @@
+name: cargo-witness
+description: Diff published crates against git source to detect supply chain attacks
+author: cargo-witness
+branding:
+  icon: shield
+  color: red
+inputs:
+  cargo-lock:
+    description: Path to the Cargo.lock file to check
+    required: false
+    default: Cargo.lock
+  github-token:
+    description: Token used to query the GitHub git-trees API (raises rate limit)
+    required: false
+    default: ${{ github.token }}
+  fail-on:
+    description: 'Fail the build at/above this severity: high | medium | info'
+    required: false
+    default: medium
+  sarif:
+    description: Optional path to write a SARIF 2.1.0 report (for code scanning)
+    required: false
+    default: ''
+  config:
+    description: Optional path to an allowlist file (.cargo-witness.json)
+    required: false
+    default: ''
+outputs:
+  suspicious-count:
+    description: Number of newly-added packages flagged SUSPICIOUS
+  suspicious:
+    description: JSON array of suspicious packages (name, version, flags)
+runs:
+  using: node20
+  main: dist/action.js

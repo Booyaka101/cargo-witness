@@ -1,0 +1,61 @@
+{
+  "name": "cargo-witness",
+  "version": "1.2.0",
+  "description": "Autonomous daemon that diffs published Rust crate artifacts against their git source to detect supply-chain attacks (injected/modified build.rs, unexpected binaries, checksum mismatch).",
+  "bin": {
+    "cargo-witness": "bin/cargo-witness.js"
+  },
+  "type": "commonjs",
+  "main": "src/scanner.js",
+  "files": [
+    "bin/",
+    "src/",
+    "dist/",
+    "action.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "scan": "node bin/cargo-witness.js --scan",
+    "report": "node bin/cargo-witness.js --report",
+    "build:action": "ncc build src/action.js -o dist --minify && node -e \"require('fs').renameSync('dist/index.js','dist/action.js')\"",
+    "validate:action": "action-validator action.yml",
+    "test": "node test/run.js",
+    "prepublishOnly": "npm run build:action && npm test"
+  },
+  "keywords": [
+    "rust",
+    "cargo",
+    "supply-chain",
+    "security",
+    "build.rs",
+    "crates.io",
+    "onering",
+    "sbom",
+    "dependency-scanning"
+  ],
+  "author": "cargo-witness",
+  "license": "MIT",
+  "homepage": "https://github.com/Booyaka101/cargo-witness#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Booyaka101/cargo-witness.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Booyaka101/cargo-witness/issues"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.8.1",
+    "node-cron": "^3.0.3",
+    "node-fetch": "^2.7.0",
+    "node-notifier": "^10.0.1",
+    "tar": "^7.4.3"
+  },
+  "devDependencies": {
+    "@action-validator/cli": "^0.6.0",
+    "@vercel/ncc": "^0.38.1"
+  }
+}
