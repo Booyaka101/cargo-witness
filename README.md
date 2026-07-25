@@ -177,7 +177,7 @@ is committed to `dist/` — it runs on any GitHub runner OS. The CLI/daemon keep
 persistent SQLite store for cross-run history.
 
 A ready-to-copy example is in
-[`.github/workflows/cargo-witness-example.yml`](.github/workflows/cargo-witness-example.yml).
+[`docs/example-workflow.yml`](docs/example-workflow.yml).
 
 ## Docker
 

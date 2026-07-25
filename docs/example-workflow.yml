@@ -1,0 +1,38 @@
+# EXAMPLE WORKFLOW (template — this file intentionally lives in docs/, NOT in
+# .github/workflows/, so it is not executed by this repository).
+#
+# Copy it into YOUR Rust project's .github/workflows/ directory to have
+# cargo-witness check every pull request that changes Cargo.lock and fail the
+# build if a newly-added dependency's published artifact diverges from its
+# source.
+#
+# In CI mode the action compares against the previous commit (`git diff HEAD~1`),
+# so the checkout must fetch at least two commits (`fetch-depth: 2`).
+
+name: cargo-witness
+
+on:
+  pull_request:
+    paths:
+      - Cargo.lock
+
+jobs:
+  supply-chain:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2 # needed for the `git diff HEAD~1` comparison
+
+      - name: Run cargo-witness
+        id: witness
+        uses: Booyaka101/cargo-witness@v1 # or pin: @v1.2.0
+        with:
+          cargo-lock: Cargo.lock
+          github-token: ${{ github.token }}
+          fail-on: medium # high | medium | info
+
+      - name: Report result
+        if: always()
+        run: echo "Suspicious packages: ${{ steps.witness.outputs.suspicious-count }}"
