@@ -28,6 +28,13 @@ jobs:
         run: npm run build:action
 
       - name: Check committed bundle is up to date
-        # Warning only: ncc output can differ slightly across platforms/versions,
-        # and the bundle is native-free so there is no platform binary to drift.
-        run: git diff --exit-code dist/ || echo "::warning::dist/ differs from a fresh local build; run 'npm run build:action' and commit if intended."
+        # Hard failure, not a warning. This was warning-only on the assumption that
+        # ncc output varies across platforms/versions — measured 2026-07-27 and it
+        # does not: a Linux build (docker node:24, ncc 0.44.1 from the lockfile) is
+        # byte-identical to the bundle committed from Windows, and this step has
+        # passed on every run. dist/action.js is what the Action actually executes,
+        # so a stale one means the published behaviour differs from the source; that
+        # deserves to fail rather than scroll past in the log.
+        run: |
+          git diff --exit-code -- dist/ \
+            || (echo "::error::dist/ is stale — run 'npm run build:action' and commit dist/action.js" && exit 1)
