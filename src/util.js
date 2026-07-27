@@ -1,5 +1,8 @@
 'use strict';
-const fetch = require('node-fetch');
+// Node has had a global fetch since 18, which is this package's engines floor.
+// node-fetch v3 is ESM-only, so `require('node-fetch')` returns a module namespace
+// rather than a function on any Node without require(esm) — that surfaced as
+// "fetch is not a function" on Node 20 while passing on 22.
 const { config } = require('./config');
 
 /** Sleep for ms milliseconds. */
