@@ -1,6 +1,6 @@
 {
   "name": "cargo-witness",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Autonomous daemon that diffs published Rust crate artifacts against their git source to detect supply-chain attacks (injected/modified build.rs, unexpected binaries, checksum mismatch).",
   "bin": {
     "cargo-witness": "bin/cargo-witness.js"
