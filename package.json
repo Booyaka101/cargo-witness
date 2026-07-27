@@ -48,14 +48,14 @@
     "node": ">=18"
   },
   "dependencies": {
-    "better-sqlite3": "^11.8.1",
-    "node-cron": "^3.0.3",
-    "node-fetch": "^2.7.0",
+    "better-sqlite3": "^13.0.1",
+    "node-cron": "^4.6.0",
+    "node-fetch": "^3.3.2",
     "node-notifier": "^10.0.1",
     "tar": "^7.4.3"
   },
   "devDependencies": {
     "@action-validator/cli": "^0.6.0",
-    "@vercel/ncc": "^0.38.1"
+    "@vercel/ncc": "^0.44.1"
   }
 }
