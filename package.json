@@ -56,5 +56,8 @@
   "devDependencies": {
     "@action-validator/cli": "^0.6.0",
     "@vercel/ncc": "^0.44.1"
+  },
+  "allowScripts": {
+    "better-sqlite3@13.0.1": true
   }
 }
