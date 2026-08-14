@@ -23,9 +23,12 @@ jobs:
       - uses: actions/checkout@v7
       # Our own tool. Locks the runner image's tool versions and diffs them when
       # GitHub bumps the image — including when a floating label like
-      # ubuntu-latest silently re-points. Report-only; no fail-on yet.
+      # ubuntu-latest silently re-points. Fails once a pinned label is within
+      # 60 days of retirement, which is enough notice to move deliberately.
       - name: Runner image drift
         uses: Booyaka101/runner-drift@v1
+        with:
+          fail-on-retirement: 60
 
       - name: pnpm v11 CI guard
         uses: Booyaka101/pnpm11-ci-guard@v1
@@ -41,8 +44,6 @@ jobs:
       # Version cooldown: npm worms are typically identified within hours, so
       # refuse to be among the first to install a brand-new version.
       - name: Dependency cooldown
-        # report-only until 2026-08-12; then this line goes and it becomes a gate
-        continue-on-error: true
         run: npx --yes npm-script-lens@latest audit --path . --cooldown
 
       # Shell/Dockerfile/Terraform/PHP — the file types GitHub gated behind paid
