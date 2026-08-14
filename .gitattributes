@@ -1,0 +1,12 @@
+# Normalise to LF in the repository and in the working tree on every platform.
+# A Windows clone with core.autocrlf=true otherwise rewrites shebangs to CRLF,
+# and a publish from that clone ships a binary Linux rejects as "bad interpreter".
+* text=auto eol=lf
+
+# Collapsed in pull requests and excluded from the language bar. Dependabot
+# opens these weekly and the churn is machine-written, not reviewable by eye.
+package-lock.json linguist-generated=true
+
+# Built bundle, committed because the Action runs it directly. Generated, so it
+# is kept out of the language bar and folded shut in diffs.
+dist/* linguist-generated=true
