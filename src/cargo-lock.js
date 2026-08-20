@@ -12,10 +12,24 @@ const fs = require('fs');
  * are skipped.
  *
  * @param {string} lockPath path to Cargo.lock
- * @returns {Array<{name:string, version:string}>}
+ * @param {{withSource?:boolean}} [opts] include each package's `source` string
+ *        (used by the scanner to keep crates.io absence probing off alternate
+ *        registries). Off by default so the return shape stays stable.
+ * @returns {Array<{name:string, version:string, source?:string}>}
  */
-function parseCargoLock(lockPath) {
-  const text = fs.readFileSync(lockPath, 'utf8');
+function parseCargoLock(lockPath, opts = {}) {
+  let text;
+  try {
+    text = fs.readFileSync(lockPath, 'utf8');
+  } catch (e) {
+    if (e.code === 'ENOENT') {
+      throw new Error(
+        `Cargo.lock not found at ${lockPath}. Run from a Rust project directory, ` +
+        'or point at one with --lock <path>.'
+      );
+    }
+    throw e;
+  }
   const lines = text.split(/\r?\n/);
 
   const packages = [];
@@ -23,7 +37,9 @@ function parseCargoLock(lockPath) {
 
   const flush = () => {
     if (cur && cur.name && cur.version && cur.source && cur.source.includes('registry+')) {
-      packages.push({ name: cur.name, version: cur.version });
+      const p = { name: cur.name, version: cur.version };
+      if (opts.withSource) p.source = cur.source;
+      packages.push(p);
     }
     cur = null;
   };
@@ -64,4 +80,13 @@ function parseTomlString(v) {
   return s;
 }
 
-module.exports = { parseCargoLock };
+/**
+ * True when a Cargo.lock `source` string points at crates.io (git or sparse
+ * index). Absence probing only makes sense there: a crates.io 404 for a crate
+ * that lives on an alternate registry proves nothing.
+ */
+function isCratesIoSource(source) {
+  return /github\.com\/rust-lang\/crates\.io-index|index\.crates\.io/.test(String(source));
+}
+
+module.exports = { parseCargoLock, isCratesIoSource };

@@ -32,8 +32,13 @@ const UA = config.userAgent;
  *   checksum:string|null, yanked:boolean
  * }>}
  */
-async function fetchCrate(name, version, { tmpRoot } = {}) {
-  const meta = await fetchCrateMeta(name, version);
+async function fetchCrate(name, version, { tmpRoot, meta } = {}) {
+  if (!meta) meta = await fetchCrateMeta(name, version);
+  if (meta.absent) {
+    throw new Error(
+      `crates.io no longer serves ${name}@${version} (removed from the registry); no artifact to download`
+    );
+  }
   const repository = meta.repository || null;
 
   const dir = fs.mkdtempSync(
@@ -83,9 +88,29 @@ async function fetchCrate(name, version, { tmpRoot } = {}) {
   }
 }
 
-async function fetchCrateMeta(name, version) {
+/**
+ * Fetch crates.io metadata for one version.
+ *
+ * A 404 on the version endpoint is a signal, not an error: crates.io responds
+ * to a malicious publish by DELETING the version (arrayref@0.3.10, 2026-08-20).
+ * With `absent404` (the default) a 404 returns a typed absence instead of
+ * throwing, disambiguated by one extra GET on the crate itself:
+ *   version 404 + crate 200 → { absent: true, crateExists: true }  (VERSION_REMOVED)
+ *   version 404 + crate 404 → { absent: true, crateExists: false } (CRATE_REMOVED)
+ * Every other non-ok status still throws — fetchRetry's backoff owns 429/5xx,
+ * so an outage or rate limit can never masquerade as a removal.
+ * Pass `absent404: false` for non-crates.io registry entries, where a 404 from
+ * crates.io proves nothing.
+ */
+async function fetchCrateMeta(name, version, { absent404 = true } = {}) {
   const url = `${config.cratesApiBase}/crates/${encodeURIComponent(name)}/${encodeURIComponent(version)}`;
   const res = await fetchRetry(url);
+  if (res.status === 404 && absent404) {
+    const crateRes = await fetchRetry(`${config.cratesApiBase}/crates/${encodeURIComponent(name)}`);
+    if (crateRes.ok) return { absent: true, crateExists: true };
+    if (crateRes.status === 404) return { absent: true, crateExists: false };
+    throw new Error(`crates.io API ${crateRes.status} for ${name}`);
+  }
   if (!res.ok) throw new Error(`crates.io API ${res.status} for ${name}@${version}`);
   const data = await res.json();
   const v = data.version || {};

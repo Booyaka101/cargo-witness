@@ -20,6 +20,8 @@ appearing in the public repository.
 | **`BUILD_RS_MODIFIED`** | `build.rs` present in both, but the published content differs from the git source (newline-normalised). |
 | **`BINARY_NOT_IN_GIT`** | A precompiled `.so/.dll/.exe/.dylib/.wasm` shipped in the artifact but not in source. |
 | **`CHECKSUM_MISMATCH`** | The downloaded artifact's sha256 does not match the checksum crates.io recorded — CDN/artifact tampering. |
+| **`VERSION_REMOVED`** | crates.io no longer serves this version but the crate exists. Deletion is how crates.io responds to a malicious publish (the *arrayref* incident, Aug 20, 2026). |
+| **`CRATE_REMOVED`** | crates.io no longer serves the crate at all (version and crate both 404). |
 | `VCS_MISMATCH` (info) | The self-reported publish commit disagrees with the OIDC-attested commit. |
 | `TRUSTED_PUBLISH` (info) | Positive signal: published via crates.io Trusted Publishing and verified against the attested commit. |
 | `YANKED` (info) | The version is yanked on crates.io. |
@@ -27,6 +29,8 @@ appearing in the public repository.
 A `high` or `medium` flag → the package is recorded `SUSPICIOUS` and (interactively)
 raises a desktop notification. `info` flags are surfaced but don't mark the
 package suspicious.
+
+![cargo-witness scanning a lockfile that pins the withdrawn arrayref 0.3.10](docs/screenshot-scan.png)
 
 ## Why this catches what a `git clone` review misses
 
@@ -103,6 +107,7 @@ Once published to npm you can run it with `npx cargo-witness --scan`.
 | `--config <path>` | Allowlist file (default `./.cargo-witness.json`). |
 | `--fail-on <level>` | Exit non-zero at/above severity `high\|medium\|info` (default `medium`). |
 | `--sarif <path>` | Write a SARIF 2.1.0 report for GitHub code scanning. |
+| `--no-recheck` | Skip the 24h registry metadata re-check of already-cleared packages. |
 | `--json` | Machine-readable output (`--scan` / `--report`). |
 | `--now` | (`--daemon`) run one scan immediately on startup. |
 | `--quiet`, `-q` | Suppress per-crate progress lines. |
@@ -147,6 +152,43 @@ single fetch.
 
 State is stored in a SQLite DB at `~/.cargo-witness/witness.db`. Already-checked
 `name@version` pairs are skipped on subsequent runs, so daemon scans are cheap.
+
+## Registry removal, and the re-check the store exists for
+
+On Aug 20, 2026 the Rust Security Response Team disclosed a
+[supply chain attack on arrayref](https://blog.rust-lang.org/2026/08/20/supply-chain-attack-on-arrayref/):
+`arrayref@0.3.10` (86 minutes online), `internment@0.8.7` (90) and
+`append-only-vec@0.1.9` (107) were republished depending on the typosquat
+`proc-macro1`, whose `build.rs` downloads and executes a payload **at build
+time**. crates.io's response was to **delete** the versions. cargo-witness
+treats that deletion as the signal it is: a lockfile pinning a withdrawn
+version gets a HIGH `VERSION_REMOVED` / `CRATE_REMOVED` finding and a non-zero
+exit under the default `--fail-on medium`.
+
+To be accurate about what cargo already does: a **cold** build does fail when a
+locked version has vanished from the index, but with a famously unhelpful
+error ([rust-lang/cargo#10063](https://github.com/rust-lang/cargo/issues/10063),
+open since 2021) that never hints the version was pulled as malicious. On the
+machine that matters, the one that ran `cargo update` inside the attack
+window, executed the malicious `build.rs`, and still has the `.crate` in
+`~/.cargo/registry`, **cargo builds on in silence**; the RSRT's own
+remediation advice is a manual find over that cache. And RustSec closed the
+arrayref malware report
+([rustsec/advisory-db#3161](https://github.com/rustsec/advisory-db/issues/3161))
+as not planned, so `cargo-audit` users have no advisory to fire on for this
+incident at all. This detection is for that already-fetched, already-executed
+case, and for turning a silent exit-0 into a HIGH finding.
+
+Deletion usually happens *after* the malicious version was fetched; the
+attack window is minutes to hours. That is what the persistent SQLite store is
+for: every scan runs a second, cheap pass over previously-cleared packages
+still in the lockfile whose metadata is older than 24h (crates.io metadata
+only, no tarball download, no git-tree fetch) and updates their
+yanked/removed state. A version withdrawn after cargo-witness cleared it flips
+to SUSPICIOUS on the next daemon run instead of staying green forever. Disable
+with `--no-recheck`; rate limits during the re-check keep the previous verdict
+and retry next run. Alternate (non-crates.io) registry entries are never
+probed, and only a genuine 404 counts; outages and 5xx stay errors.
 
 ## GitHub Action
 

@@ -4,9 +4,12 @@
  * Storage interface used by the scanner/ci/report:
  *   isChecked(name, version) -> boolean
  *   recordPackage({name, version, status, flags})
+ *   recordMetaCheck({name, version, status, flags})  // metadata-only re-check
  *   recordRun({new_count, suspicious_count})
  *   getSuspicious() -> Array<{name,version,checked_at,status,flags}>
  *   getStoredStatus(name, version) -> {status, flags} | null
+ *   getRecheckDue(packages, cutoff) -> rows already recorded whose last
+ *       metadata check (meta_checked_at) predates `cutoff`
  *   getRuns(limit) -> Array<{id,run_at,new_count,suspicious_count}>
  *   close()
  *
@@ -25,13 +28,32 @@ function createMemoryStore() {
   const key = (n, v) => `${n}@${v}`;
 
   return {
+    _packages: packages, // escape hatch (tests)
     isChecked(name, version) {
       return packages.has(key(name, version));
     },
     recordPackage({ name, version, status, flags }) {
+      const now = Date.now();
       packages.set(key(name, version), {
-        name, version, checked_at: Date.now(), status, flags: flags || [],
+        name, version, checked_at: now, meta_checked_at: now, status, flags: flags || [],
       });
+    },
+    recordMetaCheck({ name, version, status, flags }) {
+      const r = packages.get(key(name, version));
+      if (!r) return;
+      r.status = status;
+      r.flags = flags || [];
+      r.meta_checked_at = Date.now();
+    },
+    getRecheckDue(list, cutoff) {
+      const due = [];
+      for (const p of list || []) {
+        const r = packages.get(key(p.name, p.version));
+        if (!r) continue;
+        if ((r.meta_checked_at ?? r.checked_at) >= cutoff) continue;
+        due.push({ name: p.name, version: p.version, status: r.status, flags: [...r.flags] });
+      }
+      return due;
     },
     recordRun({ new_count, suspicious_count }) {
       runs.push({ id: ++runId, run_at: Date.now(), new_count, suspicious_count });

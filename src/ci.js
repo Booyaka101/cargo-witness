@@ -2,6 +2,7 @@
 const fs = require('fs');
 const cp = require('child_process');
 const { runScan } = require('./scanner');
+const { parseCargoLock, isCratesIoSource } = require('./cargo-lock');
 const { loadAllowlist } = require('./allowlist');
 const { toSarif } = require('./sarif');
 const { maxSeverity, atLeast } = require('./severity');
@@ -16,9 +17,13 @@ const { maxSeverity, atLeast } = require('./severity');
  * @returns {Promise<{exitCode:number, report:object}>}
  */
 async function runCi(lockPath = 'Cargo.lock', {
-  concurrency = 5, store, sarif, configPath, failOn = 'medium',
+  concurrency = 5, store, sarif, configPath, failOn = 'medium', recheck = true,
 } = {}) {
-  const added = diffAddedPackages(lockPath);
+  // The lockfile diff yields only name+version, so carry each package's
+  // `source` over from the lockfile itself: without it an added alternate-
+  // registry crate would be probed against crates.io, where a 404 means
+  // nothing.
+  const added = withLockfileSource(diffAddedPackages(lockPath), lockPath);
 
   // The store is injected by the caller: the CLI passes a persistent SQLite
   // store; the GitHub Action passes a pure-JS in-memory store so its bundle
@@ -26,28 +31,37 @@ async function runCi(lockPath = 'Cargo.lock', {
   const db = store || require('./store').createMemoryStore();
   const allow = loadAllowlist(configPath);
 
-  // Split added packages: those already recorded in the store (use their stored
-  // verdict — a re-run must not silently pass a package we already flagged) and
-  // those needing a fresh scan.
+  // Added packages already recorded in the store keep their stored verdict —
+  // a re-run must not silently pass a package we already flagged.
   const known = [];
-  const toScan = [];
   for (const p of added) {
     const s = db.getStoredStatus(p.name, p.version);
     if (s) known.push({ name: p.name, version: p.version, ...s });
-    else toScan.push(p);
   }
 
-  const { results, suppressedCount } = await runScan({
+  // Pass ALL added packages: runScan skips already-recorded ones in its scan
+  // pass but may refresh their registry state in the re-check pass (persistent
+  // store only; the Action's fresh in-memory store has nothing due).
+  const { results, rechecked, suppressedCount } = await runScan({
     lockPath,
-    packages: toScan,
+    packages: added,
     db,
     concurrency,
     allowRules: allow.rules,
     log: (m) => process.stderr.write(m + '\n'),
+    recheck,
   });
 
+  // A re-check may have updated a known package's verdict (e.g. its version
+  // was deleted from crates.io since we cleared it) — prefer the fresh state.
+  const refreshed = new Map((rechecked || []).map((r) => [`${r.name}@${r.version}`, r]));
   const scanned = [
-    ...known.map((k) => ({ name: k.name, version: k.version, status: k.status, flags: k.flags })),
+    ...known.map((k) => {
+      const r = refreshed.get(`${k.name}@${k.version}`);
+      return r
+        ? { name: k.name, version: k.version, status: r.status, flags: r.flags || [] }
+        : { name: k.name, version: k.version, status: k.status, flags: k.flags };
+    }),
     ...results.map((r) => ({ name: r.name, version: r.version, status: r.status, flags: r.flags || [] })),
   ];
 
@@ -78,6 +92,25 @@ async function runCi(lockPath = 'Cargo.lock', {
 
   process.stdout.write(JSON.stringify(report, null, 2) + '\n');
   return { exitCode: gated ? 1 : 0, report };
+}
+
+/**
+ * Tag each diffed package with whether the lockfile sources it from crates.io.
+ * A package no longer present in the lockfile keeps `cratesIo` unset (unknown).
+ */
+function withLockfileSource(added, lockPath) {
+  let sources;
+  try {
+    sources = new Map(
+      parseCargoLock(lockPath, { withSource: true }).map((p) => [`${p.name}@${p.version}`, p.source])
+    );
+  } catch {
+    return added; // unreadable lockfile: the scan itself will report it
+  }
+  return added.map((p) => {
+    const source = sources.get(`${p.name}@${p.version}`);
+    return source === undefined ? p : { ...p, source, cratesIo: isCratesIoSource(source) };
+  });
 }
 
 /**

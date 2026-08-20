@@ -43,7 +43,12 @@ function writeSummary(report) {
         .join(', ');
       lines.push(`| \`${s.name}\` | ${s.version} | ${flags} |\n`);
     }
-    lines.push('\nThese crates differ from their git source in a way consistent with supply-chain tampering. **Do not build until reviewed.**\n');
+    for (const s of report.suspicious) {
+      for (const f of s.flags || []) {
+        if (typeof f === 'object' && f.detail) lines.push(`\n**\`${s.name}@${s.version}\`** ${f.detail}\n`);
+      }
+    }
+    lines.push('\nThese crates are a supply-chain risk: a published artifact diverging from its git source, or a version crates.io no longer serves. **Do not build until reviewed.**\n');
   } else if (report.addedPackages.length === 0) {
     lines.push('\nNo dependency changes to check. ✅\n');
   } else {
@@ -83,7 +88,8 @@ async function main() {
       const flags = (s.flags || [])
         .map((f) => (typeof f === 'string' ? f : f.flag))
         .join(', ');
-      console.log(`::error title=cargo-witness::${s.name}@${s.version}: ${flags}`);
+      const detail = (s.flags || []).map((f) => (typeof f === 'object' && f.detail) || '').find(Boolean);
+      console.log(`::error title=cargo-witness::${s.name}@${s.version}: ${flags}${detail ? ` — ${detail}` : ''}`);
     }
   }
   process.exit(exitCode);

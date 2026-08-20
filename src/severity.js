@@ -3,7 +3,7 @@
 /**
  * Severity for each finding flag. Drives report colouring, --fail-on gating and
  * SARIF `level`.
- *   high   → strong tamper signal (build.rs / binary / checksum)
+ *   high   → strong tamper signal (build.rs / binary / checksum / registry removal)
  *   medium → source divergence from git (content or unexpected file)
  *   info   → advisory (yanked)
  */
@@ -12,6 +12,8 @@ const SEVERITY = {
   BUILD_RS_INJECTED: 'high',
   BUILD_RS_MODIFIED: 'high',
   BINARY_NOT_IN_GIT: 'high',
+  VERSION_REMOVED: 'high',   // crates.io deleted this version (the arrayref response)
+  CRATE_REMOVED: 'high',     // crates.io no longer serves the crate at all
   SOURCE_MODIFIED: 'medium',
   FILE_NOT_IN_GIT: 'medium',
   VCS_MISMATCH: 'info',      // self-reported commit ≠ attested commit
