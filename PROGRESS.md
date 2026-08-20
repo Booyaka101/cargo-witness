@@ -1,8 +1,9 @@
 # cargo-witness — progress
 
-Status: **v1.3.0 complete on branch `feat/registry-absence`** (PR to master,
-owner merges + publishes). Production-hardened, fully tested (offline + live),
-npm-publishable, portable GitHub Action, Docker.
+Status: **v1.3.0 complete, PR #10 open** (feat/registry-absence -> master, all
+CI checks green on b299569; owner merges, tags v1.3.0 on the merge commit once
+its checks are green, then `npm publish`). Production-hardened, fully tested
+(offline + live), npm-publishable, portable GitHub Action, Docker.
 
 ## v1.3 — registry-absence detection + 24h re-check (the arrayref response)
 
