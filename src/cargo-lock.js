@@ -18,7 +18,18 @@ const fs = require('fs');
  * @returns {Array<{name:string, version:string, source?:string}>}
  */
 function parseCargoLock(lockPath, opts = {}) {
-  const text = fs.readFileSync(lockPath, 'utf8');
+  let text;
+  try {
+    text = fs.readFileSync(lockPath, 'utf8');
+  } catch (e) {
+    if (e.code === 'ENOENT') {
+      throw new Error(
+        `Cargo.lock not found at ${lockPath}. Run from a Rust project directory, ` +
+        'or point at one with --lock <path>.'
+      );
+    }
+    throw e;
+  }
   const lines = text.split(/\r?\n/);
 
   const packages = [];

@@ -9,6 +9,12 @@ const { isSuspicious, severityOf } = require('./severity');
 const { applyAllowlist } = require('./allowlist');
 const { pool } = require('./util');
 
+const RECHECK_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+// Flags the metadata re-check owns: recomputed from current registry state on
+// every re-check; everything else (the git-diff verdict) is carried over.
+const META_FLAGS = new Set(['YANKED', 'VERSION_REMOVED', 'CRATE_REMOVED']);
+
 /**
  * Core scan loop shared by --scan, --daemon and --ci.
  *
@@ -36,11 +42,6 @@ const { pool } = require('./util');
  * @returns {Promise<{newCount:number, suspicious:Array, results:Array,
  *   rechecked:Array, suppressedCount:number}>}
  */
-const RECHECK_MAX_AGE_MS = 24 * 60 * 60 * 1000;
-
-// Flags the metadata re-check owns: recomputed from current registry state on
-// every re-check; everything else (the git-diff verdict) is carried over.
-const META_FLAGS = new Set(['YANKED', 'VERSION_REMOVED', 'CRATE_REMOVED']);
 async function runScan(opts = {}) {
   const log = opts.log || (() => {});
   const db = opts.db; // a store (see src/store.js); required
@@ -54,16 +55,26 @@ async function runScan(opts = {}) {
   const seen = new Set();
   const todo = [];
   const all = [];
+  const offRegistry = [];
   for (const p of packages) {
     const key = `${p.name}@${p.version}`;
     if (seen.has(key)) continue;
     seen.add(key);
+    // Only crates.io can be verified: there is no artifact to download and no
+    // absence to read from a 404 the alternate registry never answered.
+    if (p.cratesIo === false) { offRegistry.push(p); continue; }
     all.push(p);
     if (db.isChecked(p.name, p.version)) continue;
     todo.push(p);
   }
 
   log(`${packages.length} registry package(s) in lockfile, ${todo.length} not yet checked.`);
+  if (offRegistry.length) {
+    log(`${offRegistry.length} package(s) on another registry (not verifiable against crates.io):`);
+  }
+  for (const p of offRegistry) {
+    log(`  [skipped] ${p.name}@${p.version} (${registryHost(p.source)})`);
+  }
 
   const treeCache = new Map();
   const blobCache = new Map();
@@ -110,6 +121,22 @@ async function runScan(opts = {}) {
   db.recordRun({ new_count: newCount, suspicious_count: suspicious.length });
 
   return { newCount, suspicious, results, rechecked, suppressedCount: state.suppressed };
+}
+
+/** Print a finding's detail indented and wrapped, so it stays readable at 80 columns. */
+function logDetail(log, detail, width = 74) {
+  let line = '';
+  for (const word of String(detail).split(/\s+/)) {
+    if (line && `${line} ${word}`.length > width) { log(`      ${line}`); line = word; }
+    else line = line ? `${line} ${word}` : word;
+  }
+  if (line) log(`      ${line}`);
+}
+
+/** Host of a Cargo.lock `source` string, for the skipped-package note. */
+function registryHost(source) {
+  const m = String(source || '').match(/https?:\/\/([^/]+)/);
+  return m ? m[1] : 'that registry';
 }
 
 /** Drop allowlisted flags, counting and logging what was muted. */
@@ -165,7 +192,7 @@ async function recheckOne(row, ctx) {
   if (status === 'SUSPICIOUS' && row.status !== 'SUSPICIOUS') {
     const names = fresh.map((f) => f.flag).join(',');
     log(`  [SUSPICIOUS !!] ${row.name}@${row.version}${names ? ` {${names}}` : ''}`);
-    for (const f of fresh) if (f.detail) log(`      ${f.detail}`);
+    for (const f of fresh) if (f.detail) logDetail(log, f.detail);
   } else if (status !== row.status) {
     log(`  [recheck] ${row.name}@${row.version}: ${row.status} -> ${status}`);
   }
@@ -189,7 +216,7 @@ async function checkOne(p, ctx) {
     db.recordPackage({ name: p.name, version: p.version, status, flags });
     const names = flags.map((f) => f.flag).join(',');
     log(`  [${status === 'SUSPICIOUS' ? 'SUSPICIOUS !!' : 'clean'}] ${label}${names ? ` {${names}}` : ''}`);
-    for (const f of flags) if (f.detail) log(`      ${f.detail}`);
+    for (const f of flags) if (f.detail) logDetail(log, f.detail);
     return { ...p, status, flags };
   }
 

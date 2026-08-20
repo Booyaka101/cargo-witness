@@ -308,15 +308,21 @@ async function main() {
     okName('500 -> ERROR, not a finding');
   } catch (e) { failName('500 -> ERROR', e); }
 
-  // Alternate-registry package: a crates.io 404 proves nothing -> ERROR.
+  // Alternate-registry package: not verifiable against crates.io, so it is
+  // skipped before any request rather than probed or reported.
+  let altLog = '';
+  const altBefore = hits.api;
   const rAlt = await runScan({
     packages: [{ name: 'altpkg', version: '1.0.0', source: 'registry+sparse+https://my-registry.example/index/' }],
-    db: createMemoryStore(), log: () => {},
+    db: createMemoryStore(), log: (m) => { altLog += m + '\n'; },
   });
   try {
-    assert.strictEqual(rAlt.results[0].status, 'ERROR', JSON.stringify(rAlt.results[0]));
-    assert.ok(rAlt.results[0].error.includes('404'));
-    okName('alt-registry 404 -> ERROR, never CRATE_REMOVED');
+    assert.strictEqual(hits.api, altBefore, 'an alt-registry package must not be requested at all');
+    assert.strictEqual(rAlt.results.length, 0, JSON.stringify(rAlt.results));
+    assert.strictEqual(rAlt.suspicious.length, 0);
+    assert.ok(altLog.includes('[skipped] altpkg@1.0.0'), altLog);
+    assert.ok(altLog.includes('my-registry.example'), altLog);
+    okName('alt-registry package skipped with a clear note, never CRATE_REMOVED');
   } catch (e) { failName('alt-registry', e); }
 
   // --- Re-check pass: a version deleted AFTER it was cleared ----------------
@@ -508,7 +514,10 @@ async function main() {
   try {
     assert.strictEqual(cli1.code, 1, `exit ${cli1.code}\n${cli1.stdout}\n${cli1.stderr}`);
     assert.ok(cli1.stdout.includes('  [SUSPICIOUS !!] goneversion@1.0.0 {VERSION_REMOVED}'), cli1.stdout);
-    assert.ok(cli1.stdout.includes('removed from the registry'), cli1.stdout);
+    // The detail is wrapped for an 80-column terminal, so match on the joined text.
+    const flat = cli1.stdout.replace(/\s+/g, ' ');
+    assert.ok(flat.includes('1.0.0 was removed from the registry'), cli1.stdout);
+    assert.ok(cli1.stdout.split('\n').every((l) => l.length <= 80), 'output must fit 80 columns');
     assert.ok(cli1.stdout.includes('  [SUSPICIOUS !!] gonecrate@1.0.0 {CRATE_REMOVED}'), cli1.stdout);
     okName('CLI --scan on a removed version exits 1 with the flagged line + detail');
   } catch (e) { failName('CLI exit 1', e); }
@@ -581,10 +590,8 @@ async function main() {
     assert.strictEqual(ciOut.report.addedPackages.length, 1, JSON.stringify(ciOut.report.addedPackages));
     assert.strictEqual(ciOut.report.suspiciousCount, 0, JSON.stringify(ciOut.report.scanned));
     assert.strictEqual(ciOut.exitCode, 0);
-    assert.strictEqual(ciOut.report.scanned[0].status, 'ERROR');
-    // The version endpoint is fetched as usual; what must NOT happen is the
-    // crate-level disambiguation that turns a 404 into a removal finding.
-    assert.strictEqual(hits.api - before, 1, `expected 1 request, got ${hits.api - before}`);
+    assert.strictEqual(ciOut.report.scanned.length, 0, JSON.stringify(ciOut.report.scanned));
+    assert.strictEqual(hits.api - before, 0, `expected 0 requests, got ${hits.api - before}`);
     okName('CI mode never absence-probes an added alt-registry package');
   } catch (e) { failName('CI alt-registry', e); }
 

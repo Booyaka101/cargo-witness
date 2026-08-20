@@ -30,6 +30,8 @@ A `high` or `medium` flag → the package is recorded `SUSPICIOUS` and (interact
 raises a desktop notification. `info` flags are surfaced but don't mark the
 package suspicious.
 
+![cargo-witness scanning a lockfile that pins the withdrawn arrayref 0.3.10](docs/screenshot-scan.png)
+
 ## Why this catches what a `git clone` review misses
 
 Developers audit source on GitHub. But `cargo build` runs the artifact from

@@ -109,7 +109,7 @@ function withLockfileSource(added, lockPath) {
   }
   return added.map((p) => {
     const source = sources.get(`${p.name}@${p.version}`);
-    return source === undefined ? p : { ...p, cratesIo: isCratesIoSource(source) };
+    return source === undefined ? p : { ...p, source, cratesIo: isCratesIoSource(source) };
   });
 }
 
