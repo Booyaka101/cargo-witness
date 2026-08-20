@@ -1,7 +1,7 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
-const { fetchCrate } = require('./fetcher');
+const { fetchCrate, fetchCrateMeta } = require('./fetcher');
 const { fetchGitTree } = require('./git-tree');
 const { diff, normalizeSource } = require('./differ');
 const { severityOf } = require('./severity');
@@ -17,7 +17,25 @@ const C = {
  * modified Rust source (especially build.rs) so a human can judge the finding.
  */
 async function inspectDiff(name, version, { log = console.log } = {}) {
-  const crate = await fetchCrate(name, version);
+  // A withdrawn version has no artifact to diff; explain the finding instead of
+  // failing on the missing download.
+  const meta = await fetchCrateMeta(name, version);
+  if (meta.absent) {
+    const flag = meta.crateExists ? 'VERSION_REMOVED' : 'CRATE_REMOVED';
+    log(`${C.bold}cargo-witness --diff ${name}@${version}${C.reset}`);
+    log(`${C.red}● ${flag}${C.reset}`);
+    log(meta.crateExists
+      ? `${C.dim}crates.io no longer serves this version; the crate exists but ${version} was removed\n` +
+        'from the registry. There is no published artifact left to diff. A deleted version is how\n' +
+        `crates.io responds to a malicious publish, so treat this as compromised until proven otherwise.${C.reset}`
+      : `${C.dim}crates.io no longer serves this crate at all; both the version and the crate return 404,\n` +
+        `so there is no published artifact to diff. If every crate reports this, suspect a proxy.${C.reset}`);
+    log(`\n${C.dim}Check whether the artifact was already fetched and built locally:\n` +
+      `  ls ~/.cargo/registry/cache/*/${name}-${version}.crate${C.reset}\n`);
+    return { status: 'SUSPICIOUS', flags: [{ flag, file: null, severity: 'high' }] };
+  }
+
+  const crate = await fetchCrate(name, version, { meta });
   try {
     const tp = crate.trustpub;
     const attestedSha = tp && tp.sha ? tp.sha : undefined;

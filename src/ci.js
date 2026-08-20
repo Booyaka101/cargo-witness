@@ -2,6 +2,7 @@
 const fs = require('fs');
 const cp = require('child_process');
 const { runScan } = require('./scanner');
+const { parseCargoLock, isCratesIoSource } = require('./cargo-lock');
 const { loadAllowlist } = require('./allowlist');
 const { toSarif } = require('./sarif');
 const { maxSeverity, atLeast } = require('./severity');
@@ -18,7 +19,11 @@ const { maxSeverity, atLeast } = require('./severity');
 async function runCi(lockPath = 'Cargo.lock', {
   concurrency = 5, store, sarif, configPath, failOn = 'medium', recheck = true,
 } = {}) {
-  const added = diffAddedPackages(lockPath);
+  // The lockfile diff yields only name+version, so carry each package's
+  // `source` over from the lockfile itself: without it an added alternate-
+  // registry crate would be probed against crates.io, where a 404 means
+  // nothing.
+  const added = withLockfileSource(diffAddedPackages(lockPath), lockPath);
 
   // The store is injected by the caller: the CLI passes a persistent SQLite
   // store; the GitHub Action passes a pure-JS in-memory store so its bundle
@@ -87,6 +92,25 @@ async function runCi(lockPath = 'Cargo.lock', {
 
   process.stdout.write(JSON.stringify(report, null, 2) + '\n');
   return { exitCode: gated ? 1 : 0, report };
+}
+
+/**
+ * Tag each diffed package with whether the lockfile sources it from crates.io.
+ * A package no longer present in the lockfile keeps `cratesIo` unset (unknown).
+ */
+function withLockfileSource(added, lockPath) {
+  let sources;
+  try {
+    sources = new Map(
+      parseCargoLock(lockPath, { withSource: true }).map((p) => [`${p.name}@${p.version}`, p.source])
+    );
+  } catch {
+    return added; // unreadable lockfile: the scan itself will report it
+  }
+  return added.map((p) => {
+    const source = sources.get(`${p.name}@${p.version}`);
+    return source === undefined ? p : { ...p, cratesIo: isCratesIoSource(source) };
+  });
 }
 
 /**

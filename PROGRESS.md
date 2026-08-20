@@ -5,7 +5,7 @@ CI checks green on b299569; owner merges, tags v1.3.0 on the merge commit once
 its checks are green, then `npm publish`). Production-hardened, fully tested
 (offline + live), npm-publishable, portable GitHub Action, Docker.
 
-## v1.3 — registry-absence detection + 24h re-check (the arrayref response)
+## v1.3 registry-absence detection + 24h re-check (the arrayref response)
 
 Driven by the 2026-08-20 RSRT disclosure (arrayref@0.3.10 86 min online,
 internment@0.8.7 90, append-only-vec@0.1.9 107; crates.io DELETED the versions).

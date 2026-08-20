@@ -20,7 +20,7 @@ appearing in the public repository.
 | **`BUILD_RS_MODIFIED`** | `build.rs` present in both, but the published content differs from the git source (newline-normalised). |
 | **`BINARY_NOT_IN_GIT`** | A precompiled `.so/.dll/.exe/.dylib/.wasm` shipped in the artifact but not in source. |
 | **`CHECKSUM_MISMATCH`** | The downloaded artifact's sha256 does not match the checksum crates.io recorded — CDN/artifact tampering. |
-| **`VERSION_REMOVED`** | crates.io no longer serves this version but the crate exists — deletion is how crates.io responds to a malicious publish (the *arrayref* incident, Aug 20, 2026). |
+| **`VERSION_REMOVED`** | crates.io no longer serves this version but the crate exists. Deletion is how crates.io responds to a malicious publish (the *arrayref* incident, Aug 20, 2026). |
 | **`CRATE_REMOVED`** | crates.io no longer serves the crate at all (version and crate both 404). |
 | `VCS_MISMATCH` (info) | The self-reported publish commit disagrees with the OIDC-attested commit. |
 | `TRUSTED_PUBLISH` (info) | Positive signal: published via crates.io Trusted Publishing and verified against the attested commit. |

@@ -87,7 +87,7 @@ async function runScan(opts = {}) {
   // fresh in-memory store).
   let rechecked = [];
   if (opts.recheck !== false) {
-    const cutoff = Date.now() - (opts.recheckMaxAgeMs || RECHECK_MAX_AGE_MS);
+    const cutoff = Date.now() - (opts.recheckMaxAgeMs ?? RECHECK_MAX_AGE_MS);
     const due = db.getRecheckDue(all.filter((p) => p.cratesIo !== false), cutoff);
     if (due.length > 0) {
       log(`recheck: ${due.length} previously-checked package(s) due for a registry metadata re-check.`);
@@ -110,6 +110,16 @@ async function runScan(opts = {}) {
   db.recordRun({ new_count: newCount, suspicious_count: suspicious.length });
 
   return { newCount, suspicious, results, rechecked, suppressedCount: state.suppressed };
+}
+
+/** Drop allowlisted flags, counting and logging what was muted. */
+function suppress(ctx, name, version, flags) {
+  const { kept, suppressed } = applyAllowlist(ctx.allowRules, name, version, flags);
+  if (suppressed.length) {
+    ctx.state.suppressed += suppressed.length;
+    ctx.log(`  (suppressed ${suppressed.length} allowlisted finding(s) for ${name}@${version})`);
+  }
+  return kept;
 }
 
 /**
@@ -139,20 +149,15 @@ function pushAbsenceFlag(flags, version, meta) {
  * yanked/removed flags, carries the stored git-diff verdict, and persists
  * meta_checked_at so the next 24h of runs skip it.
  */
-async function recheckOne(row, { db, log, state, allowRules }) {
-  const meta = await fetchCrateMeta(row.name, row.version);
+async function recheckOne(row, ctx) {
+  const { db, log } = ctx;
+  const meta = await fetchCrateMeta(row.name, row.version, { absent404: row.cratesIo !== false });
   const base = (row.flags || []).filter((f) => !META_FLAGS.has(typeof f === 'string' ? f : f.flag));
-  let fresh = [];
-  if (meta.absent) pushAbsenceFlag(fresh, row.version, meta);
-  else if (meta.yanked) pushFlag(fresh, 'YANKED', null);
+  const raw = [];
+  if (meta.absent) pushAbsenceFlag(raw, row.version, meta);
+  else if (meta.yanked) pushFlag(raw, 'YANKED', null);
 
-  const { kept, suppressed } = applyAllowlist(allowRules, row.name, row.version, fresh);
-  if (suppressed.length) {
-    state.suppressed += suppressed.length;
-    log(`  (suppressed ${suppressed.length} allowlisted finding(s) for ${row.name}@${row.version})`);
-  }
-  fresh = kept;
-
+  const fresh = suppress(ctx, row.name, row.version, raw);
   const flags = [...base, ...fresh];
   const status = isSuspicious(flags) ? 'SUSPICIOUS' : (row.status === 'SUSPICIOUS' ? 'CLEAN' : row.status);
   db.recordMetaCheck({ name: row.name, version: row.version, status, flags });
@@ -169,7 +174,7 @@ async function recheckOne(row, { db, log, state, allowRules }) {
 }
 
 async function checkOne(p, ctx) {
-  const { db, log, treeCache, blobCache, state, allowRules } = ctx;
+  const { db, log, treeCache, blobCache, state } = ctx;
   const label = `${p.name}@${p.version}`;
 
   // Metadata first: a 404 here is the finding (crates.io deleted the version),
@@ -177,14 +182,9 @@ async function checkOne(p, ctx) {
   // crates.io entries are probed; alternate registries keep the old throw.
   const meta = await fetchCrateMeta(p.name, p.version, { absent404: p.cratesIo !== false });
   if (meta.absent) {
-    let flags = [];
-    pushAbsenceFlag(flags, p.version, meta);
-    const { kept, suppressed } = applyAllowlist(allowRules, p.name, p.version, flags);
-    if (suppressed.length) {
-      state.suppressed += suppressed.length;
-      log(`  (suppressed ${suppressed.length} allowlisted finding(s) for ${label})`);
-    }
-    flags = kept;
+    const raw = [];
+    pushAbsenceFlag(raw, p.version, meta);
+    const flags = suppress(ctx, p.name, p.version, raw);
     const status = isSuspicious(flags) ? 'SUSPICIOUS' : 'CLEAN';
     db.recordPackage({ name: p.name, version: p.version, status, flags });
     const names = flags.map((f) => f.flag).join(',');
@@ -262,13 +262,7 @@ async function checkOne(p, ctx) {
       }
     }
 
-    // Allowlist suppression.
-    const { kept, suppressed } = applyAllowlist(allowRules, p.name, p.version, flags);
-    if (suppressed.length) {
-      state.suppressed += suppressed.length;
-      log(`  (suppressed ${suppressed.length} allowlisted finding(s) for ${label})`);
-    }
-    flags = kept;
+    flags = suppress(ctx, p.name, p.version, flags);
 
     // Status: SUSPICIOUS if any flag is >= medium severity; NO_GIT_TAG carries
     // through when we had no tree and produced no flags.
