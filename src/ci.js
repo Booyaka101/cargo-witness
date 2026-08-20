@@ -16,7 +16,7 @@ const { maxSeverity, atLeast } = require('./severity');
  * @returns {Promise<{exitCode:number, report:object}>}
  */
 async function runCi(lockPath = 'Cargo.lock', {
-  concurrency = 5, store, sarif, configPath, failOn = 'medium',
+  concurrency = 5, store, sarif, configPath, failOn = 'medium', recheck = true,
 } = {}) {
   const added = diffAddedPackages(lockPath);
 
@@ -26,28 +26,37 @@ async function runCi(lockPath = 'Cargo.lock', {
   const db = store || require('./store').createMemoryStore();
   const allow = loadAllowlist(configPath);
 
-  // Split added packages: those already recorded in the store (use their stored
-  // verdict — a re-run must not silently pass a package we already flagged) and
-  // those needing a fresh scan.
+  // Added packages already recorded in the store keep their stored verdict —
+  // a re-run must not silently pass a package we already flagged.
   const known = [];
-  const toScan = [];
   for (const p of added) {
     const s = db.getStoredStatus(p.name, p.version);
     if (s) known.push({ name: p.name, version: p.version, ...s });
-    else toScan.push(p);
   }
 
-  const { results, suppressedCount } = await runScan({
+  // Pass ALL added packages: runScan skips already-recorded ones in its scan
+  // pass but may refresh their registry state in the re-check pass (persistent
+  // store only; the Action's fresh in-memory store has nothing due).
+  const { results, rechecked, suppressedCount } = await runScan({
     lockPath,
-    packages: toScan,
+    packages: added,
     db,
     concurrency,
     allowRules: allow.rules,
     log: (m) => process.stderr.write(m + '\n'),
+    recheck,
   });
 
+  // A re-check may have updated a known package's verdict (e.g. its version
+  // was deleted from crates.io since we cleared it) — prefer the fresh state.
+  const refreshed = new Map((rechecked || []).map((r) => [`${r.name}@${r.version}`, r]));
   const scanned = [
-    ...known.map((k) => ({ name: k.name, version: k.version, status: k.status, flags: k.flags })),
+    ...known.map((k) => {
+      const r = refreshed.get(`${k.name}@${k.version}`);
+      return r
+        ? { name: k.name, version: k.version, status: r.status, flags: r.flags || [] }
+        : { name: k.name, version: k.version, status: k.status, flags: k.flags };
+    }),
     ...results.map((r) => ({ name: r.name, version: r.version, status: r.status, flags: r.flags || [] })),
   ];
 

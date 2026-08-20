@@ -25,7 +25,8 @@ function toSarif(suspicious, lockPath = 'Cargo.lock') {
           text:
             `${pkg.name}@${pkg.version}: ${flag}` +
             (file ? ` (${file})` : '') +
-            ' — published crate diverges from git source.',
+            ' — ' +
+            ((typeof f === 'object' && f.detail) || RULE_TEXT[flag] || 'published crate diverges from git source.'),
         },
         locations: [
           {
@@ -59,7 +60,7 @@ function toSarif(suspicious, lockPath = 'Cargo.lock') {
           driver: {
             name: 'cargo-witness',
             informationUri: 'https://github.com/Booyaka101/cargo-witness',
-            version: '1.2.0',
+            version: require('../package.json').version,
             rules,
           },
         },
@@ -76,6 +77,8 @@ const RULE_TEXT = {
   FILE_NOT_IN_GIT: 'A Rust source file present in the artifact is absent from git.',
   BINARY_NOT_IN_GIT: 'A precompiled binary is shipped in the artifact but not in git.',
   CHECKSUM_MISMATCH: 'Artifact sha256 does not match the crates.io-recorded checksum.',
+  VERSION_REMOVED: 'This version was deleted from crates.io while the crate still exists; deletion is how crates.io responds to a malicious publish.',
+  CRATE_REMOVED: 'The crate is no longer served by crates.io at all; registry removal is how crates.io responds to a malicious publish.',
   VCS_MISMATCH: 'Self-reported publish commit differs from the attested (OIDC) commit.',
   TRUSTED_PUBLISH: 'Published via crates.io Trusted Publishing; verified against the attested commit.',
   YANKED: 'This crate version is yanked on crates.io.',

@@ -17,6 +17,7 @@ function parseArgs(argv) {
   const args = {
     mode: null, lock: 'Cargo.lock', concurrency: 5, json: false, quiet: false,
     db: undefined, now: false, failOn: 'medium', sarif: undefined, config: undefined,
+    recheck: true,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -35,6 +36,7 @@ function parseArgs(argv) {
       case '--fail-on': args.failOn = String(argv[++i] || 'medium').toLowerCase(); break;
       case '--json': args.json = true; break;
       case '--quiet': case '-q': args.quiet = true; break;
+      case '--no-recheck': args.recheck = false; break;
       case '--now': args.now = true; break;
       case '--version': case '-V': args.mode = 'version'; break;
       case '--help': case '-h': args.mode = 'help'; break;
@@ -66,6 +68,8 @@ Options:
   --fail-on <level>      Exit non-zero at/above severity: high|medium|info
                          (default: medium)
   --sarif <path>         Write a SARIF 2.1.0 report (for code scanning)
+  --no-recheck           Skip the 24h registry metadata re-check of
+                         already-cleared packages (yanked/removed state)
   --json                 Machine-readable output (--scan / --report)
   --now                  (--daemon) run one scan immediately on startup
   --quiet, -q            Suppress per-crate progress lines
@@ -118,7 +122,7 @@ async function main() {
   if (args.mode === 'ci') {
     const { exitCode } = await runCi(args.lock, {
       concurrency: args.concurrency, store: openDb(args.db), sarif: args.sarif,
-      configPath: args.config, failOn: args.failOn,
+      configPath: args.config, failOn: args.failOn, recheck: args.recheck,
     });
     process.exit(exitCode);
   }
@@ -127,22 +131,25 @@ async function main() {
     const db = openDb(args.db);
     const allow = loadAllowlist(args.config);
     if (allow.path && !args.quiet) console.log(`Using allowlist: ${allow.path}`);
-    const { newCount, suspicious, results, suppressedCount } = await runScan({
+    const { newCount, suspicious, results, rechecked, suppressedCount } = await runScan({
       lockPath: args.lock, db, concurrency: args.concurrency,
-      allowRules: allow.rules, log: makeLog(args),
+      allowRules: allow.rules, log: makeLog(args), recheck: args.recheck,
     });
     notifySuspicious(suspicious);
     writeSarif(args.sarif, suspicious, args.lock);
 
     if (args.json) {
       process.stdout.write(JSON.stringify({
-        newCount, suspiciousCount: suspicious.length, suppressedCount, suspicious,
+        newCount, suspiciousCount: suspicious.length, suppressedCount,
+        recheckedCount: (rechecked || []).length, suspicious,
         results: results.map((r) => ({ name: r.name, version: r.version, status: r.status, flags: r.flags || [] })),
+        rechecked: (rechecked || []).map((r) => ({ name: r.name, version: r.version, status: r.status, flags: r.flags || [] })),
       }, null, 2) + '\n');
     } else {
       console.log('');
       console.log(`Done. ${newCount} package(s) checked, ${suspicious.length} SUSPICIOUS` +
-        (suppressedCount ? `, ${suppressedCount} suppressed` : '') + '.');
+        (suppressedCount ? `, ${suppressedCount} suppressed` : '') +
+        ((rechecked || []).length ? `, ${rechecked.length} re-checked` : '') + '.');
       if (args.sarif) console.log(`SARIF written to ${args.sarif}`);
       if (suspicious.length > 0) console.log("Run 'cargo-witness --report' for details.");
     }
@@ -159,6 +166,7 @@ async function main() {
         const db = openDb(args.db);
         const { newCount, suspicious } = await runScan({
           lockPath: args.lock, db, concurrency: args.concurrency, allowRules: allow.rules, log,
+          recheck: args.recheck,
         });
         notifySuspicious(suspicious);
         console.log(`[${new Date().toISOString()}] scan complete: ${newCount} checked, ${suspicious.length} SUSPICIOUS`);

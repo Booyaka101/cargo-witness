@@ -1,5 +1,6 @@
 node_modules/
 *.log
 .DS_Store
+.tmp-e2e/
 # dist/ is intentionally NOT ignored — GitHub Actions must ship the bundled
 # dist/action.js (built with `npm run build:action`).

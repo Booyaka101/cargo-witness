@@ -120,8 +120,10 @@ function diff(crateFiles, gitFiles, prefix, opts = {}) {
   };
 }
 
-function pushFlag(flags, flag, file) {
-  flags.push({ flag, file, severity: severityOf(flag) });
+function pushFlag(flags, flag, file, detail) {
+  const f = { flag, file, severity: severityOf(flag) };
+  if (detail) f.detail = detail;
+  flags.push(f);
 }
 
 /**

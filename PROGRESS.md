@@ -1,7 +1,32 @@
 # cargo-witness — progress
 
-Status: **v1.2 complete.** Production-hardened, fully tested (offline + live),
+Status: **v1.3.0 complete on branch `feat/registry-absence`** (PR to master,
+owner merges + publishes). Production-hardened, fully tested (offline + live),
 npm-publishable, portable GitHub Action, Docker.
+
+## v1.3 — registry-absence detection + 24h re-check (the arrayref response)
+
+Driven by the 2026-08-20 RSRT disclosure (arrayref@0.3.10 86 min online,
+internment@0.8.7 90, append-only-vec@0.1.9 107; crates.io DELETED the versions).
+
+- **VERSION_REMOVED / CRATE_REMOVED (both HIGH).** `fetchCrateMeta` returns a
+  typed absence on 404 (all other non-ok still throw; fetchRetry owns 429/5xx),
+  disambiguated by one GET on `/crates/{name}`: 200 = version withdrawn, 404 =
+  crate gone. Handled in `checkOne` before any download; allowlist-suppressible;
+  in `--json`, `--report`, desktop notify; SARIF rules at level error.
+- **Re-check pass.** `meta_checked_at` persisted in BOTH stores (sqlite column
+  + migration for old DBs; memory store). `runScan` second pass over recorded
+  lockfile packages staler than 24h: metadata only, no tarball/git; honours
+  `--concurrency`; `--no-recheck` skips; rate limits keep the previous verdict.
+  CI mode passes all added packages so a stale known verdict can refresh.
+- **Alt-registry safety**: `parseCargoLock(.., {withSource:true})` +
+  `isCratesIoSource`; non-crates.io entries keep the old throw (ERROR, never a
+  false CRATE_REMOVED).
+- **VERIFIED live 2026-08-20**: arrayref@0.3.10 -> exit 1,
+  `[SUSPICIOUS !!] arrayref@0.3.10 {VERSION_REMOVED}` + detail line, SARIF rule
+  error, report row HIGH; arrayref@0.3.9 -> exit 0; rerun within 24h -> zero
+  registry requests; backdated store -> recheckedCount 1, verdict preserved.
+- `npm test`: 6 suites, 65 assertions (49 existing unchanged + 16 new), green.
 
 ## v1.2 — attestation + multi-host (the durability moves)
 

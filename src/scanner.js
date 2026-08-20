@@ -1,8 +1,8 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
-const { parseCargoLock } = require('./cargo-lock');
-const { fetchCrate } = require('./fetcher');
+const { parseCargoLock, isCratesIoSource } = require('./cargo-lock');
+const { fetchCrate, fetchCrateMeta } = require('./fetcher');
 const { fetchGitTree } = require('./git-tree');
 const { diff, normalizeSource, pushFlag } = require('./differ');
 const { isSuspicious, severityOf } = require('./severity');
@@ -15,7 +15,14 @@ const { pool } = require('./util');
  * Fetches, extracts and diffs each not-yet-checked registry package with bounded
  * concurrency. Git trees + build.rs/source blobs are cached per owner/repo/tag.
  * Detects: BUILD_RS_INJECTED, BUILD_RS_MODIFIED, SOURCE_MODIFIED,
- * FILE_NOT_IN_GIT, BINARY_NOT_IN_GIT, CHECKSUM_MISMATCH, YANKED.
+ * FILE_NOT_IN_GIT, BINARY_NOT_IN_GIT, CHECKSUM_MISMATCH, YANKED,
+ * VERSION_REMOVED, CRATE_REMOVED.
+ *
+ * A second, cheap pass re-checks crates.io metadata (no tarball, no git tree)
+ * for already-recorded packages still in the lockfile whose last metadata check
+ * is older than 24h — so a version deleted AFTER we cleared it (the arrayref
+ * pattern: malicious publish, 86 minutes online, then registry deletion) is
+ * still reported. Disable with opts.recheck === false (--no-recheck).
  *
  * @param {object} opts
  * @param {string} [opts.lockPath]
@@ -24,8 +31,16 @@ const { pool } = require('./util');
  * @param {(msg:string)=>void} [opts.log]
  * @param {number} [opts.concurrency]
  * @param {Array} [opts.allowRules]  allowlist rules (from src/allowlist)
- * @returns {Promise<{newCount:number, suspicious:Array, results:Array, suppressedCount:number}>}
+ * @param {boolean} [opts.recheck]  metadata re-check pass (default true)
+ * @param {number} [opts.recheckMaxAgeMs]  staleness threshold (default 24h)
+ * @returns {Promise<{newCount:number, suspicious:Array, results:Array,
+ *   rechecked:Array, suppressedCount:number}>}
  */
+const RECHECK_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+// Flags the metadata re-check owns: recomputed from current registry state on
+// every re-check; everything else (the git-diff verdict) is carried over.
+const META_FLAGS = new Set(['YANKED', 'VERSION_REMOVED', 'CRATE_REMOVED']);
 async function runScan(opts = {}) {
   const log = opts.log || (() => {});
   const db = opts.db; // a store (see src/store.js); required
@@ -33,14 +48,17 @@ async function runScan(opts = {}) {
   const concurrency = Math.max(1, opts.concurrency || 5);
   const allowRules = opts.allowRules || [];
 
-  const packages = opts.packages || parseCargoLock(opts.lockPath || 'Cargo.lock');
+  const packages = (opts.packages || parseCargoLock(opts.lockPath || 'Cargo.lock', { withSource: true }))
+    .map((p) => (p.source ? { ...p, cratesIo: isCratesIoSource(p.source) } : p));
 
   const seen = new Set();
   const todo = [];
+  const all = [];
   for (const p of packages) {
     const key = `${p.name}@${p.version}`;
     if (seen.has(key)) continue;
     seen.add(key);
+    all.push(p);
     if (db.isChecked(p.name, p.version)) continue;
     todo.push(p);
   }
@@ -63,16 +81,119 @@ async function runScan(opts = {}) {
     .map((r) => ({ name: r.name, version: r.version, flags: r.flags }));
   const newCount = results.filter((r) => r.status !== 'ERROR').length;
 
+  // Second pass: metadata-only re-check of already-cleared packages still in
+  // the lockfile. Runs AFTER pass 1 so freshly-scanned rows (meta_checked_at =
+  // now) are never re-fetched. Skipped when nothing is due (e.g. the Action's
+  // fresh in-memory store).
+  let rechecked = [];
+  if (opts.recheck !== false) {
+    const cutoff = Date.now() - (opts.recheckMaxAgeMs || RECHECK_MAX_AGE_MS);
+    const due = db.getRecheckDue(all.filter((p) => p.cratesIo !== false), cutoff);
+    if (due.length > 0) {
+      log(`recheck: ${due.length} previously-checked package(s) due for a registry metadata re-check.`);
+      rechecked = (await pool(due, concurrency, (row) =>
+        recheckOne(row, { db, log, state, allowRules }).catch((e) => {
+          // Rate limit / outage: keep the previous verdict and leave the row
+          // stale so the next run retries — never a removal finding.
+          log(`  [recheck] ${row.name}@${row.version}: ${e.message} (kept previous verdict)`);
+          return null;
+        })
+      )).filter(Boolean);
+      for (const r of rechecked) {
+        if (r.status === 'SUSPICIOUS' && r.previousStatus !== 'SUSPICIOUS') {
+          suspicious.push({ name: r.name, version: r.version, flags: r.flags });
+        }
+      }
+    }
+  }
+
   db.recordRun({ new_count: newCount, suspicious_count: suspicious.length });
 
-  return { newCount, suspicious, results, suppressedCount: state.suppressed };
+  return { newCount, suspicious, results, rechecked, suppressedCount: state.suppressed };
+}
+
+/**
+ * Registry-absence flag for a package whose version endpoint 404s. crates.io
+ * deletes versions as its response to a malicious publish (arrayref@0.3.10,
+ * internment@0.8.7, append-only-vec@0.1.9 on 2026-08-20), so absence of a
+ * version the lockfile pins is a high-severity finding, not an error.
+ */
+function pushAbsenceFlag(flags, version, meta) {
+  if (meta.crateExists) {
+    pushFlag(flags, 'VERSION_REMOVED', null,
+      `crates.io no longer serves this version; the crate exists but ${version} was removed ` +
+      'from the registry. A deleted version is how crates.io responds to a malicious publish, ' +
+      'so treat this as compromised until proven otherwise.');
+  } else {
+    pushFlag(flags, 'CRATE_REMOVED', null,
+      'crates.io no longer serves this crate at all; the whole crate is unreachable ' +
+      '(both the version and the crate itself return 404). Registry deletion is how crates.io ' +
+      'responds to a malicious publish, so treat this as compromised until proven otherwise. ' +
+      'If every crate reports this, suspect a proxy or captive portal answering 404s.');
+  }
+}
+
+/**
+ * Metadata-only re-check of one already-recorded package: one or two crates.io
+ * API GETs, no tarball download, no git-tree fetch. Refreshes the
+ * yanked/removed flags, carries the stored git-diff verdict, and persists
+ * meta_checked_at so the next 24h of runs skip it.
+ */
+async function recheckOne(row, { db, log, state, allowRules }) {
+  const meta = await fetchCrateMeta(row.name, row.version);
+  const base = (row.flags || []).filter((f) => !META_FLAGS.has(typeof f === 'string' ? f : f.flag));
+  let fresh = [];
+  if (meta.absent) pushAbsenceFlag(fresh, row.version, meta);
+  else if (meta.yanked) pushFlag(fresh, 'YANKED', null);
+
+  const { kept, suppressed } = applyAllowlist(allowRules, row.name, row.version, fresh);
+  if (suppressed.length) {
+    state.suppressed += suppressed.length;
+    log(`  (suppressed ${suppressed.length} allowlisted finding(s) for ${row.name}@${row.version})`);
+  }
+  fresh = kept;
+
+  const flags = [...base, ...fresh];
+  const status = isSuspicious(flags) ? 'SUSPICIOUS' : (row.status === 'SUSPICIOUS' ? 'CLEAN' : row.status);
+  db.recordMetaCheck({ name: row.name, version: row.version, status, flags });
+
+  if (status === 'SUSPICIOUS' && row.status !== 'SUSPICIOUS') {
+    const names = fresh.map((f) => f.flag).join(',');
+    log(`  [SUSPICIOUS !!] ${row.name}@${row.version}${names ? ` {${names}}` : ''}`);
+    for (const f of fresh) if (f.detail) log(`      ${f.detail}`);
+  } else if (status !== row.status) {
+    log(`  [recheck] ${row.name}@${row.version}: ${row.status} -> ${status}`);
+  }
+
+  return { name: row.name, version: row.version, status, flags, previousStatus: row.status };
 }
 
 async function checkOne(p, ctx) {
   const { db, log, treeCache, blobCache, state, allowRules } = ctx;
   const label = `${p.name}@${p.version}`;
 
-  const crate = await fetchCrate(p.name, p.version);
+  // Metadata first: a 404 here is the finding (crates.io deleted the version),
+  // not an error — there is no artifact to download or diff. Only genuine
+  // crates.io entries are probed; alternate registries keep the old throw.
+  const meta = await fetchCrateMeta(p.name, p.version, { absent404: p.cratesIo !== false });
+  if (meta.absent) {
+    let flags = [];
+    pushAbsenceFlag(flags, p.version, meta);
+    const { kept, suppressed } = applyAllowlist(allowRules, p.name, p.version, flags);
+    if (suppressed.length) {
+      state.suppressed += suppressed.length;
+      log(`  (suppressed ${suppressed.length} allowlisted finding(s) for ${label})`);
+    }
+    flags = kept;
+    const status = isSuspicious(flags) ? 'SUSPICIOUS' : 'CLEAN';
+    db.recordPackage({ name: p.name, version: p.version, status, flags });
+    const names = flags.map((f) => f.flag).join(',');
+    log(`  [${status === 'SUSPICIOUS' ? 'SUSPICIOUS !!' : 'clean'}] ${label}${names ? ` {${names}}` : ''}`);
+    for (const f of flags) if (f.detail) log(`      ${f.detail}`);
+    return { ...p, status, flags };
+  }
+
+  const crate = await fetchCrate(p.name, p.version, { meta });
   try {
     // Trusted Publishing (OIDC) attested record — strongest anchor, unforgeable.
     const tp = crate.trustpub;
