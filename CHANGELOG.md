@@ -33,6 +33,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   daemon run instead of staying silently green forever. Disable with
   `--no-recheck`. Rate limiting during the re-check keeps the previous verdict
   and retries next run.
+- `--diff <name> <version>` on a withdrawn version now reports the removal and
+  points at the local registry cache (`~/.cargo/registry/cache`), where the
+  already-fetched `.crate` would still be, instead of failing on the download.
 
 ### Changed
 

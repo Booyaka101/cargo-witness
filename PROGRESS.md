@@ -27,7 +27,34 @@ internment@0.8.7 90, append-only-vec@0.1.9 107; crates.io DELETED the versions).
   `[SUSPICIOUS !!] arrayref@0.3.10 {VERSION_REMOVED}` + detail line, SARIF rule
   error, report row HIGH; arrayref@0.3.9 -> exit 0; rerun within 24h -> zero
   registry requests; backdated store -> recheckedCount 1, verdict preserved.
-- `npm test`: 6 suites, 65 assertions (49 existing unchanged + 16 new), green.
+- `npm test`: 6 suites, 71 assertions (49 existing unchanged + 22 new), green.
+
+### Review pass (cb76be2) — three real defects found and fixed
+
+1. **CI absence-probed alternate registries.** `diffAddedPackages` returns only
+   name+version, so an added alt-registry crate reached the scanner with no
+   `source` and was probed against crates.io; a 404 there could have produced a
+   false `CRATE_REMOVED`. `ci.js` now carries `source` over from the lockfile.
+   (The `--scan` path was always safe: it parses sources itself.)
+2. **`recheckMaxAgeMs: 0` silently meant 24h** (`||` on a falsy 0, now `??`).
+3. **`--diff` on a withdrawn version died** on the missing artifact; it now
+   explains the removal and points at `~/.cargo/registry/cache`.
+
+Also: extracted the allowlist-suppression block (had reached three copies);
+covered the pre-1.3 **DB migration** every existing user hits on upgrade, a
+**network outage** staying ERROR, and the re-check touching **neither CDN nor
+git host**. Similarity check per house rules: `recheckOne` vs `checkOne` 10.3%,
+vs the absence branch 17.4% — well under the 60% extract threshold.
+
+### Known, deliberate: `--scan` reports NEW findings only
+
+A second `--scan` of an unchanged lockfile exits 0 even when a package is
+already recorded SUSPICIOUS (pass 1 skips checked pairs; the re-check only
+promotes *newly* suspicious rows). This is pre-1.3 behaviour and intentional:
+`--report` shows accumulated state, and `--ci` re-surfaces stored SUSPICIOUS
+verdicts for added packages so the gate still fires. Not changed here, because
+altering `--scan` exit semantics is a bigger behavioural change than this
+release should carry.
 
 ## v1.2 — attestation + multi-host (the durability moves)
 
