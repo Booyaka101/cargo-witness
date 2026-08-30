@@ -4,7 +4,7 @@ name: Guards
 # depending on ourselves — a guard that never runs on our code is untested.
 on:
   push:
-    branches: [main]
+    branches: [master]
   pull_request:
   schedule:
     - cron: '0 6 * * 1'
