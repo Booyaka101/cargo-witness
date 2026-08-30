@@ -1,9 +1,9 @@
 # cargo-witness — progress
 
-Status: **v1.4.0 complete, PR open** (feat/manifest-lane -> master; owner
-merges, tags v1.4.0 on the merge commit once its checks are green, then
-`npm publish`). Production-hardened, fully tested (offline + live),
-npm-publishable, portable GitHub Action, Docker.
+Status: **v1.4.0 complete, PR #11 open, all 6 CI checks green on 2f35a17**
+(feat/manifest-lane -> master; owner merges, tags v1.4.0 on the merge commit
+once its checks are green, then `npm publish`). Production-hardened, fully
+tested (offline + live), npm-publishable, portable GitHub Action, Docker.
 
 ## v1.4 manifest lane: DEP_INJECTED (closing the arrayref live window)
 
@@ -64,6 +64,30 @@ BINARY_NOT_IN_GIT, etc.), unchanged by this release.
   identity check; reordering tag formats is future work.
 - Artifact-side `workspace = true` entries (which `cargo package` never emits)
   are dropped from the artifact set — shrinks it, never a false flag.
+- One extra git blob fetch per crate (the git-side Cargo.toml must be read as
+  content; the trees API only gives shas). Cached per repo/ref/path so
+  workspace siblings and the shared root reuse a fetch. Documented in README.
+- The lane compares NAMES only. A dependency that exists in both manifests but
+  whose *source* was repointed (e.g. a git/registry swap on the same name) is
+  out of scope, deliberately, because version and source strings are exactly
+  what cargo rewrites.
+
+### Next steps (v1.5 candidates, in rough value order)
+
+1. **Tag-resolution ordering.** Bare `{ver}` before `{name}-{ver}` is what put
+   rand_core on `rand`'s tag. Trying name-qualified formats first, or
+   validating a candidate tag by the manifest's `[package].name` (the check
+   already written for the lane), would cut pre-existing FILE_NOT_IN_GIT and
+   SOURCE_MODIFIED noise on old crates. Cheap and well-scoped.
+2. **DEP_REMOVED / feature-set diff (info).** A dependency in git but not the
+   artifact, and `[features]` divergence, would round out the manifest lane.
+   Kept out of 1.4 because it is not the attack shape and would add noise.
+3. **Escalate a DEP_INJECTED whose injected crate has a build script.** The
+   arrayref payload lived in `proc-macro1`'s build.rs, not arrayref's. Fetching
+   the injected crate's own manifest/artifact would let the finding say "and
+   that crate runs a build script", which is the sentence a triager wants.
+4. Persist SARIF history; optional Slack/webhook notifier alongside desktop.
+5. Sparse/alternate-registry artifact URLs (currently crates.io CDN only).
 
 ## v1.3 registry-absence detection + 24h re-check (the arrayref response)
 
