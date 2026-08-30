@@ -173,6 +173,9 @@ All three:
 |------|----------|---------|
 | `BUILD_RS_INJECTED` | high | `build.rs` in the artifact, absent from git (the *onering* pattern). |
 | `BUILD_RS_MODIFIED` | high | `build.rs` in both, but the published content differs from source. |
+| `DEP_INJECTED` | high | A dependency declared in the artifact's `Cargo.toml` but absent from the git manifest (the *arrayref* pattern). |
+| `VERSION_REMOVED` | high | crates.io deleted this version while the crate still exists (its response to a malicious publish). |
+| `CRATE_REMOVED` | high | crates.io no longer serves the crate at all. |
 | `SOURCE_MODIFIED` | medium | A shared source file's published content differs from git. |
 | `FILE_NOT_IN_GIT` | medium | A file shipped in the artifact isn't present in source. |
 | `BINARY_NOT_IN_GIT` | high | A precompiled binary (`.so`/`.dll`/`.exe`/`.dylib`/`.wasm`) in the artifact but not in source. |

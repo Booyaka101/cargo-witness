@@ -4,7 +4,8 @@ const path = require('path');
 const { fetchCrate, fetchCrateMeta } = require('./fetcher');
 const { fetchGitTree } = require('./git-tree');
 const { diff, normalizeSource } = require('./differ');
-const { severityOf } = require('./severity');
+const { diffManifests } = require('./manifest');
+const { severityOf, isSuspicious } = require('./severity');
 
 const C = {
   red: '\x1b[31m', green: '\x1b[32m', yellow: '\x1b[33m', cyan: '\x1b[36m',
@@ -58,15 +59,39 @@ async function inspectDiff(name, version, { log = console.log } = {}) {
     const knownPrefix = crate.vcsInfo ? { knownPrefix: crate.vcsInfo.pathInVcs } : {};
     const result = diff(crate.crateFiles, tree.gitFiles, crate.prefix, knownPrefix);
 
-    if (result.flags.length === 0 && (!result.contentSuspects || result.contentSuspects.length === 0)) {
+    // Manifest lane: dependency names in the artifact's Cargo.toml vs git's.
+    let manifest;
+    if (result.status === 'NO_GIT_TAG') {
+      manifest = { flags: [], skipped: result.note || 'crate could not be located in the git tree' };
+    } else {
+      try {
+        const artifactToml = fs.readFileSync(
+          path.join(crate.dir, `${name}-${version}`, 'Cargo.toml'), 'utf8');
+        manifest = await diffManifests({
+          name, artifactToml, gitFiles: tree.gitFiles, gitPrefix: result.gitPrefix,
+          raw: (fp) => tree.provider.raw(tree.ref, fp),
+        });
+      } catch (e) {
+        manifest = { flags: [], skipped: e.message };
+      }
+    }
+    const flags = [...result.flags, ...manifest.flags];
+
+    if (flags.length === 0 && (!result.contentSuspects || result.contentSuspects.length === 0)) {
+      if (manifest.skipped) log(`${C.dim}manifest comparison skipped: ${manifest.skipped}${C.reset}`);
       log(`${C.green}No divergence: every published file matches the source.${C.reset}`);
       return { status: result.status };
     }
 
     // Absence-based flags.
-    for (const f of result.flags) {
+    for (const f of flags) {
       const col = severityOf(f) === 'high' ? C.red : severityOf(f) === 'medium' ? C.yellow : C.cyan;
       log(`${col}● ${f.flag}${f.file ? ` ${f.file}` : ''}${C.reset}`);
+    }
+    if (manifest.skipped) {
+      log(`${C.dim}manifest comparison skipped: ${manifest.skipped}${C.reset}`);
+    } else if (manifest.flags.length > 0) {
+      printDepSets(manifest, log);
     }
 
     // Content diffs for confirmed-different .rs files.
@@ -86,9 +111,25 @@ async function inspectDiff(name, version, { log = console.log } = {}) {
       printUnifiedDiff(remote, local, log);
     }
     log('');
-    return { status: result.status, flags: result.flags };
+    return { status: isSuspicious(flags) ? 'SUSPICIOUS' : result.status, flags };
   } finally {
     crate.cleanup();
+  }
+}
+
+/** Both dependency-name sets side by side, injected names marked in red. */
+function printDepSets(manifest, log) {
+  const gitSet = new Set(manifest.gitDeps || []);
+  const injected = new Set(manifest.flags.map((f) => f.file));
+  const all = [...new Set([...manifest.artifactDeps, ...gitSet])].sort();
+  const w = Math.max(10, ...all.map((n) => n.length)) + 2;
+  log(`\n${C.bold}▼ dependency names (published artifact vs git source)${C.reset}`);
+  log(`${C.dim}  ${'ARTIFACT'.padEnd(w)}GIT${C.reset}`);
+  for (const n of all) {
+    const a = manifest.artifactDeps.includes(n) ? n : '—';
+    const g = gitSet.has(n) ? n : '—';
+    const col = injected.has(n) ? C.red : C.dim;
+    log(`${col}  ${a.padEnd(w)}${g}${injected.has(n) ? '   ← declared only in the artifact' : ''}${C.reset}`);
   }
 }
 

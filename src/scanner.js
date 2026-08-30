@@ -5,6 +5,7 @@ const { parseCargoLock, isCratesIoSource } = require('./cargo-lock');
 const { fetchCrate, fetchCrateMeta } = require('./fetcher');
 const { fetchGitTree } = require('./git-tree');
 const { diff, normalizeSource, pushFlag } = require('./differ');
+const { diffManifests } = require('./manifest');
 const { isSuspicious, severityOf } = require('./severity');
 const { applyAllowlist } = require('./allowlist');
 const { pool } = require('./util');
@@ -20,9 +21,9 @@ const META_FLAGS = new Set(['YANKED', 'VERSION_REMOVED', 'CRATE_REMOVED']);
  *
  * Fetches, extracts and diffs each not-yet-checked registry package with bounded
  * concurrency. Git trees + build.rs/source blobs are cached per owner/repo/tag.
- * Detects: BUILD_RS_INJECTED, BUILD_RS_MODIFIED, SOURCE_MODIFIED,
- * FILE_NOT_IN_GIT, BINARY_NOT_IN_GIT, CHECKSUM_MISMATCH, YANKED,
- * VERSION_REMOVED, CRATE_REMOVED.
+ * Detects: BUILD_RS_INJECTED, BUILD_RS_MODIFIED, DEP_INJECTED,
+ * SOURCE_MODIFIED, FILE_NOT_IN_GIT, BINARY_NOT_IN_GIT, CHECKSUM_MISMATCH,
+ * YANKED, VERSION_REMOVED, CRATE_REMOVED.
  *
  * A second, cheap pass re-checks crates.io metadata (no tarball, no git tree)
  * for already-recorded packages still in the lockfile whose last metadata check
@@ -252,6 +253,26 @@ async function checkOne(p, ctx) {
     const result = diff(crate.crateFiles, gt.gitFiles, crate.prefix, diffOpts);
     let flags = [...result.flags];
 
+    // Manifest lane: dependency NAMES declared in the artifact's Cargo.toml but
+    // absent from the git-side manifest (DEP_INJECTED — the arrayref@0.3.10
+    // pattern). Only runs when the crate was confidently located in a full
+    // tree; every unknown inside suppresses and records the reason.
+    let manifest = null;
+    if (!state.gitRateLimited && gt.provider && result.status !== 'NO_GIT_TAG') {
+      try {
+        const artifactToml = fs.readFileSync(
+          path.join(crate.dir, `${p.name}-${p.version}`, 'Cargo.toml'), 'utf8');
+        manifest = await diffManifests({
+          name: p.name, artifactToml, gitFiles: gt.gitFiles, gitPrefix: result.gitPrefix,
+          raw: (fp) => cachedBlob(gt, fp, blobCache),
+        });
+        flags.push(...manifest.flags);
+      } catch (e) {
+        if (e.rateLimited) state.gitRateLimited = true;
+        manifest = { flags: [], skipped: e.rateLimited ? 'git host rate limited' : e.message };
+      }
+    }
+
     // TRUSTED_PUBLISH (info) — positive assurance; verified against attested sha.
     if (tp && tp.sha) pushFlag(flags, 'TRUSTED_PUBLISH', String(tp.sha).slice(0, 7));
 
@@ -309,7 +330,11 @@ async function checkOne(p, ctx) {
     const info = flags.filter((f) => severityOf(f) === 'info').map((f) => f.flag).join(',');
     log(`  [${marker}] ${label}${hostTag}${root}${at}${info ? ` {${info}}` : ''}`);
 
-    return { ...p, status, flags, gitPrefix: result.gitPrefix, viaCommit: gt.viaCommit, ref: gt.ref, host: gt.host, refKind: gt.refKind };
+    return {
+      ...p, status, flags, gitPrefix: result.gitPrefix, viaCommit: gt.viaCommit,
+      ref: gt.ref, host: gt.host, refKind: gt.refKind,
+      manifestSkipped: (manifest && manifest.skipped) || undefined,
+    };
   } finally {
     crate.cleanup();
   }

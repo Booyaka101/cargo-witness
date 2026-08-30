@@ -10,6 +10,7 @@
 const SEVERITY = {
   CHECKSUM_MISMATCH: 'high',
   BUILD_RS_INJECTED: 'high',
+  DEP_INJECTED: 'high',      // dependency in the artifact manifest, absent from git (arrayref 0.3.10)
   BUILD_RS_MODIFIED: 'high',
   BINARY_NOT_IN_GIT: 'high',
   VERSION_REMOVED: 'high',   // crates.io deleted this version (the arrayref response)

@@ -1,9 +1,93 @@
 # cargo-witness — progress
 
-Status: **v1.3.0 complete, PR #10 open** (feat/registry-absence -> master, all
-CI checks green on b299569; owner merges, tags v1.3.0 on the merge commit once
-its checks are green, then `npm publish`). Production-hardened, fully tested
-(offline + live), npm-publishable, portable GitHub Action, Docker.
+Status: **v1.4.0 complete, PR #11 open, all 6 CI checks green on 2f35a17**
+(feat/manifest-lane -> master; owner merges, tags v1.4.0 on the merge commit
+once its checks are green, then `npm publish`). Production-hardened, fully
+tested (offline + live), npm-publishable, portable GitHub Action, Docker.
+
+## v1.4 manifest lane: DEP_INJECTED (closing the arrayref live window)
+
+The arrayref@0.3.10 republish added ONE manifest line (`[build-dependencies]
+proc-macro1 = "1.0.107"`) and touched no source, so 1.3.0's file diff named
+nothing inside the 86-107 minute live window; VERSION_REMOVED only fires after
+crates.io deletes the version. Cargo.toml is deliberately byte-diff-skipped
+(cargo rewrites it at package time), so the fix is a NAME-level comparison.
+
+- **`src/manifest.js`** — `parseManifestDeps` (smol-toml; all dep tables incl.
+  `[target.<cfg>.*dependencies]` + underscore aliases; `package = "..."`
+  renames resolve to the real crate name; `workspace = true` entries collected
+  for resolution; `[workspace.dependencies]` + `[package]`/`[project]` name
+  extracted) and `diffManifests` (async lane; artifact set vs git set, one
+  DEP_INJECTED (high) per name only the artifact declares; flag `file` = dep
+  name so the existing allowlist matches per crate AND per dependency).
+- **Conservative by design** — every unknown suppresses and records a reason
+  (`skipped`): truncated tree, unparseable manifest either side, unfetchable
+  git manifest, unresolvable workspace inheritance, confidence < 0.5
+  (NO_GIT_TAG), and a **package-identity check**: the git-side manifest's
+  `[package].name` must equal the scanned crate. That last one was driven by
+  two REAL false-positive classes found during measurement (see below).
+  `--diff` prints the reason, or both dependency sets side by side.
+- Wiring: scanner lane after `diff()` (rate-limit propagates to
+  `state.gitRateLimited`; `manifestSkipped` carried on the result row and in
+  `--json`), `--diff` section + `printDepSets`, severity table, SARIF rule at
+  error, README, screenshot `docs/screenshot-diff-dep.png` (labelled
+  reconstruction; the real 0.3.10 artifact is deleted).
+
+### Measurement (the brief's no-false-positives proof)
+
+First run over rust-lang/cargo's lockfile fired DEP_INJECTED on 4 real crates.
+Both root causes were mis-resolved git locations, not parser bugs:
+
+1. **rand_core@0.9.5** fell back to tag `0.9.5` = the 2019 tag of the sibling
+   `rand` crate (bare `{ver}` tag format matches sibling tags in multi-crate
+   repos). Lane saw `rand`'s manifest. Pre-existing 1.3.0 noise on the same
+   crates (FILE_NOT_IN_GIT/SOURCE_MODIFIED) comes from the same weakness.
+2. **varisat-*@0.2.2** (2020, `.cargo_vcs_info.json` without `path_in_vcs`)
+   heuristically resolved to the repo root, whose VIRTUAL workspace manifest
+   declares zero deps.
+
+Fix: the package-identity check above (no exception lists). Re-run:
+ws (42) + ripgrep (52) + rust-lang/cargo (523) = **617 crates checked,
+0 DEP_INJECTED**, 0 lane skips on ws/rg (crates.io 429s meant the cargo
+lockfile took four passes against one accumulating DB to finish all 523; the
+totals above are read back out of the three DBs). A third identity-check catch
+turned up in that data: `im-rc`, whose repository manifest names the crate
+`im`. Remaining suspicious rows are pre-existing 1.3.0 verdicts (crossbeam
+SOURCE_MODIFIED on shipped file copies, ring's pregenerated .o
+BINARY_NOT_IN_GIT, etc.), unchanged by this release.
+
+### Known, deliberate (v1.4)
+
+- Bare `{ver}` tag fallback can still land on a sibling crate's tag in
+  multi-crate repos (pre-existing; affects FILE_NOT_IN_GIT/SOURCE_MODIFIED
+  noise for old crates without vcs info). The manifest lane is shielded by the
+  identity check; reordering tag formats is future work.
+- Artifact-side `workspace = true` entries (which `cargo package` never emits)
+  are dropped from the artifact set — shrinks it, never a false flag.
+- One extra git blob fetch per crate (the git-side Cargo.toml must be read as
+  content; the trees API only gives shas). Cached per repo/ref/path so
+  workspace siblings and the shared root reuse a fetch. Documented in README.
+- The lane compares NAMES only. A dependency that exists in both manifests but
+  whose *source* was repointed (e.g. a git/registry swap on the same name) is
+  out of scope, deliberately, because version and source strings are exactly
+  what cargo rewrites.
+
+### Next steps (v1.5 candidates, in rough value order)
+
+1. **Tag-resolution ordering.** Bare `{ver}` before `{name}-{ver}` is what put
+   rand_core on `rand`'s tag. Trying name-qualified formats first, or
+   validating a candidate tag by the manifest's `[package].name` (the check
+   already written for the lane), would cut pre-existing FILE_NOT_IN_GIT and
+   SOURCE_MODIFIED noise on old crates. Cheap and well-scoped.
+2. **DEP_REMOVED / feature-set diff (info).** A dependency in git but not the
+   artifact, and `[features]` divergence, would round out the manifest lane.
+   Kept out of 1.4 because it is not the attack shape and would add noise.
+3. **Escalate a DEP_INJECTED whose injected crate has a build script.** The
+   arrayref payload lived in `proc-macro1`'s build.rs, not arrayref's. Fetching
+   the injected crate's own manifest/artifact would let the finding say "and
+   that crate runs a build script", which is the sentence a triager wants.
+4. Persist SARIF history; optional Slack/webhook notifier alongside desktop.
+5. Sparse/alternate-registry artifact URLs (currently crates.io CDN only).
 
 ## v1.3 registry-absence detection + 24h re-check (the arrayref response)
 

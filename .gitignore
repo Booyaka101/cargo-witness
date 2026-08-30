@@ -5,3 +5,4 @@ node_modules/
 # dist/ is intentionally NOT ignored — GitHub Actions must ship the bundled
 # dist/action.js (built with `npm run build:action`).
 .tmp-demo/
+tmp-measure/

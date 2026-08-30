@@ -325,6 +325,59 @@ async function main() {
     okName('alt-registry package skipped with a clear note, never CRATE_REMOVED');
   } catch (e) { failName('alt-registry', e); }
 
+  // --- Manifest lane (the arrayref@0.3.10 manifest edit) --------------------
+  // 15. DEP_INJECTED: one added [build-dependencies] line, source untouched.
+  const goodToml = '[package]\nname = "depinject"\nversion = "15.0.0"\n[dependencies]\nserde = "1"\n';
+  await add('depinject', '15.0.0', {
+    files: { 'Cargo.toml': goodToml + '[build-dependencies]\nproc-macro1 = "1.0.107"\n', 'src/lib.rs': 'pub fn a(){}' },
+    repo: 'https://github.com/acme/depinject', tag: 'v15.0.0',
+    gitFiles: { 'Cargo.toml': goodToml, 'src/lib.rs': 'pub fn a(){}' },
+  });
+  // 16. Workspace member whose git manifest inherits deps the artifact inlines.
+  await add('depws', '16.0.0', {
+    files: {
+      'Cargo.toml': '[package]\nname = "depws"\nversion = "16.0.0"\n[dependencies]\ntokio = "1.38.0"\n',
+      'src/lib.rs': 'pub fn a(){}',
+    },
+    repo: 'https://github.com/acme/depws', tag: 'v16.0.0',
+    gitFiles: {
+      'depws/Cargo.toml': '[package]\nname = "depws"\nversion = "16.0.0"\n[dependencies]\ntokio.workspace = true\n',
+      'depws/src/lib.rs': 'pub fn a(){}',
+      'Cargo.toml': '[workspace]\nmembers = ["depws"]\n[workspace.dependencies]\ntokio = "1"\n',
+    },
+  });
+  const rDep = await runScan({
+    packages: [{ name: 'depinject', version: '15.0.0' }, { name: 'depws', version: '16.0.0' }],
+    db: createMemoryStore(), log: () => {},
+  });
+  const byD = {}; for (const r of rDep.results) byD[r.name] = r;
+  try {
+    assert.strictEqual(byD['depinject'].status, 'SUSPICIOUS', JSON.stringify(byD['depinject']));
+    const f = byD['depinject'].flags.find((x) => x.flag === 'DEP_INJECTED');
+    assert.ok(f, JSON.stringify(byD['depinject'].flags));
+    assert.strictEqual(f.file, 'proc-macro1');
+    assert.strictEqual(f.severity, 'high');
+    okName('injected manifest dependency -> SUSPICIOUS {DEP_INJECTED proc-macro1} (high)');
+  } catch (e) { failName('DEP_INJECTED', e); }
+  try {
+    assert.strictEqual(byD['depws'].status, 'CLEAN', JSON.stringify(byD['depws']));
+    assert.ok(!flagNames(byD['depws']).includes('DEP_INJECTED'));
+    assert.strictEqual(byD['depws'].manifestSkipped, undefined, byD['depws'].manifestSkipped);
+    okName('workspace-inherited git deps match the inlined artifact -> CLEAN');
+  } catch (e) { failName('workspace manifest CLEAN', e); }
+
+  // Allowlist can suppress per dependency name.
+  const rDepAllow = await runScan({
+    packages: [{ name: 'depinject', version: '15.0.0' }],
+    db: createMemoryStore(), log: () => {},
+    allowRules: [{ name: 'depinject', flag: 'DEP_INJECTED', file: 'proc-macro1' }],
+  });
+  try {
+    assert.strictEqual(rDepAllow.results[0].status, 'CLEAN', JSON.stringify(rDepAllow.results[0]));
+    assert.strictEqual(rDepAllow.suppressedCount, 1);
+    okName('allowlist suppresses DEP_INJECTED by dependency name -> CLEAN');
+  } catch (e) { failName('allowlist DEP_INJECTED', e); }
+
   // --- Re-check pass: a version deleted AFTER it was cleared ----------------
   await add('recheckgone', '14.0.0', {
     files: { 'Cargo.toml': 'a', 'src/lib.rs': 'pub fn a(){}' },
@@ -549,6 +602,31 @@ async function main() {
     assert.strictEqual(cli3.code, 0, `exit ${cli3.code}\n${cli3.stdout}\n${cli3.stderr}`);
     okName('CLI --scan on a still-published version exits 0');
   } catch (e) { failName('CLI exit 0', e); }
+
+  // The injected-dependency fixture through the real CLI: exit 1 at the
+  // default --fail-on medium, SARIF rule at level error.
+  const depSarif = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'cw-sarif2-')), 'out.sarif');
+  const cliDep = await runCli(['--scan', '--lock', lockFor([['depinject', '15.0.0']]), '--db', tmpDb(), '--sarif', depSarif]);
+  try {
+    assert.strictEqual(cliDep.code, 1, `exit ${cliDep.code}\n${cliDep.stdout}\n${cliDep.stderr}`);
+    assert.ok(cliDep.stdout.includes('[SUSPICIOUS !!] depinject@15.0.0'), cliDep.stdout);
+    const sarif = JSON.parse(fs.readFileSync(depSarif, 'utf8'));
+    const rule = sarif.runs[0].tool.driver.rules.find((r) => r.id === 'DEP_INJECTED');
+    assert.ok(rule, 'missing SARIF rule DEP_INJECTED');
+    assert.strictEqual(rule.defaultConfiguration.level, 'error');
+    assert.ok(sarif.runs[0].results.some((r) => r.ruleId === 'DEP_INJECTED' && r.level === 'error'));
+    okName('CLI --scan on the injected dependency exits 1, SARIF rule at error');
+  } catch (e) { failName('CLI DEP_INJECTED', e); }
+
+  // --diff shows both dependency-name sets side by side.
+  const cliDepDiff = await runCli(['--diff', 'depinject', '15.0.0']);
+  try {
+    assert.strictEqual(cliDepDiff.code, 0, `exit ${cliDepDiff.code}\n${cliDepDiff.stdout}\n${cliDepDiff.stderr}`);
+    assert.ok(cliDepDiff.stdout.includes('DEP_INJECTED proc-macro1'), cliDepDiff.stdout);
+    assert.ok(cliDepDiff.stdout.includes('dependency names'), cliDepDiff.stdout);
+    assert.ok(cliDepDiff.stdout.includes('declared only in the artifact'), cliDepDiff.stdout);
+    okName('CLI --diff prints both dependency sets and marks the injected name');
+  } catch (e) { failName('CLI --diff DEP_INJECTED', e); }
 
   // --diff on a withdrawn version explains the finding instead of failing on
   // the missing artifact.
