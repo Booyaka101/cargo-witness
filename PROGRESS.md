@@ -1,9 +1,18 @@
 # cargo-witness — progress
 
-Status: **v1.4.0 complete, PR #11 open, all 6 CI checks green on 2f35a17**
-(feat/manifest-lane -> master; owner merges, tags v1.4.0 on the merge commit
-once its checks are green, then `npm publish`). Production-hardened, fully
-tested (offline + live), npm-publishable, portable GitHub Action, Docker.
+Status: **v1.4.0 SHIPPED** (2026-08-30). PR #11 squash-merged to master as
+`748a85c`, CI green on that commit, tag `v1.4.0` pushed, Release workflow
+published `cargo-witness@1.4.0` to npm with SLSA provenance (sigstore log index
+2650877824), GitHub Release cut, and the `v1` major tag moved to `748a85c` so
+Action consumers pinning `@v1` get it. Verified by installing 1.4.0 from the
+public registry into a clean directory. Production-hardened, fully tested
+(offline + live), portable GitHub Action, Docker.
+
+Also fixed in passing (#12, `d0756c9`): `guards.yml` triggered on
+`push: branches: [main]`, but this repo's default branch is `master` and `main`
+has never existed, so that trigger had never fired once. The guards ran only on
+pull requests and the Monday cron, which is exactly what #8 set out to prevent.
+Confirmed fixed by the check-runs on `d0756c9`, which now include `guards`.
 
 ## v1.4 manifest lane: DEP_INJECTED (closing the arrayref live window)
 
