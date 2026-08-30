@@ -142,7 +142,10 @@ async function main() {
       process.stdout.write(JSON.stringify({
         newCount, suspiciousCount: suspicious.length, suppressedCount,
         recheckedCount: (rechecked || []).length, suspicious,
-        results: results.map((r) => ({ name: r.name, version: r.version, status: r.status, flags: r.flags || [] })),
+        results: results.map((r) => ({
+          name: r.name, version: r.version, status: r.status, flags: r.flags || [],
+          ...(r.manifestSkipped ? { manifestSkipped: r.manifestSkipped } : {}),
+        })),
         rechecked: (rechecked || []).map((r) => ({ name: r.name, version: r.version, status: r.status, flags: r.flags || [] })),
       }, null, 2) + '\n');
     } else {

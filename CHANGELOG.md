@@ -5,6 +5,58 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2026-08-30
+
+### Added
+
+- **Manifest lane: `DEP_INJECTED` (HIGH).** The August 20, 2026 arrayref
+  compromise added exactly one line to the published manifest: a
+  `[build-dependencies]` entry for the typosquat `proc-macro1`, whose build
+  script downloads and executes a payload. The crate's own source was
+  untouched, so no file diff fires, and `VERSION_REMOVED` only fires after
+  crates.io deletes the version, which took up to 107 minutes. Until now the
+  artifact-versus-git comparison named nothing inside that window, because
+  `Cargo.toml` is deliberately on the byte-diff skip list (cargo rewrites it at
+  package time). cargo-witness now parses the dependency names declared in the
+  artifact's `Cargo.toml` across `[dependencies]`, `[build-dependencies]`,
+  `[dev-dependencies]` and every `[target.<cfg>.*dependencies]` table,
+  resolving `package = "..."` renames to the real crate name, parses the same
+  set from the git-side manifest at the resolved commit and subdirectory,
+  resolving `workspace = true` entries against the repository root's
+  `[workspace.dependencies]`, and flags each crate name present in the
+  artifact but absent from git as `DEP_INJECTED`. Names only, never version
+  strings; version rewriting is exactly the normalisation that made the byte
+  diff unusable. The flag is allowlist-suppressible per crate and per
+  dependency name, appears in `--json`, `--report` and desktop notifications,
+  and gets a SARIF rule at level `error`.
+- Every unknown suppresses the flag rather than guessing: a truncated git
+  tree, a manifest that fails to parse on either side, a git-side manifest
+  that could not be fetched, an unresolvable workspace inheritance, or a crate
+  that could not be confidently located in the tree. The reason is recorded,
+  and `--diff <name> <version>` explains the suppression instead of staying
+  silent. When the lane does compare, `--diff` prints both dependency-name
+  sets side by side and marks the injected names.
+
+### Changed
+
+- **This changes verdicts.** A crate whose published manifest declares a
+  dependency its git source never had was CLEAN under 1.3.0 and is SUSPICIOUS
+  with a HIGH finding under 1.4.0, failing the default `--fail-on medium`
+  gate. Measured against the resolved dependency sets of 617 real crates from
+  three real lockfiles (a cargo workspace carrying serde, tokio and clap with
+  heavy workspace inheritance at 42 crates, ripgrep at 52, and rust-lang/cargo
+  itself at 523), the lane produced zero `DEP_INJECTED` findings on legitimate
+  crates.
+- The first measurement run did fire on four real crates, and both causes were
+  mis-resolved git locations rather than parser bugs: `rand_core@0.9.5` fell
+  back to the bare tag `0.9.5`, which in that repository belongs to the sibling
+  `rand` crate, and three `varisat-*@0.2.2` crates published without a
+  `path_in_vcs` resolved to a virtual workspace root that declares no
+  dependencies at all. Rather than add an exception list, the lane now checks
+  that the git-side manifest's `[package].name` is the crate being scanned, and
+  suppresses with that reason when it is not. `im-rc` (whose repository
+  manifest names the crate `im`) is caught by the same check.
+
 ## [1.3.0] - 2026-08-20
 
 ### Added
@@ -144,6 +196,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Workspace-subdirectory resolution to locate a crate's source within a
   multi-crate repository.
 
+[1.4.0]: https://github.com/Booyaka101/cargo-witness/releases/tag/v1.4.0
 [1.3.0]: https://github.com/Booyaka101/cargo-witness/releases/tag/v1.3.0
 [1.2.0]: https://github.com/Booyaka101/cargo-witness/releases/tag/v1.2.0
 [1.1.0]: https://github.com/Booyaka101/cargo-witness/releases/tag/v1.1.0

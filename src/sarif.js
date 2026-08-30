@@ -72,6 +72,7 @@ function toSarif(suspicious, lockPath = 'Cargo.lock') {
 
 const RULE_TEXT = {
   BUILD_RS_INJECTED: 'build.rs present in the published crate but absent from git.',
+  DEP_INJECTED: 'A dependency declared in the published crate\'s manifest is absent from the git manifest.',
   BUILD_RS_MODIFIED: 'build.rs content differs between the published crate and git.',
   SOURCE_MODIFIED: 'A Rust source file differs between the published crate and git.',
   FILE_NOT_IN_GIT: 'A Rust source file present in the artifact is absent from git.',

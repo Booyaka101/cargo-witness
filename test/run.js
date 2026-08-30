@@ -6,6 +6,7 @@ const path = require('path');
 
 const files = [
   'differ.test.js',
+  'manifest.test.js',
   'cargo-lock.test.js',
   'ci-diff.test.js',
   'units.test.js',

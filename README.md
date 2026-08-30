@@ -17,6 +17,7 @@ appearing in the public repository.
 | Flag | Meaning |
 |------|---------|
 | **`BUILD_RS_INJECTED`** | `build.rs` in the published crate, absent from git (the *onering* pattern). |
+| **`DEP_INJECTED`** | A dependency declared in the published crate's `Cargo.toml` but absent from the git manifest (the *arrayref* pattern: one added `proc-macro1` line, source untouched). Compared by crate name across every dependency table, with workspace inheritance and renames resolved. |
 | **`BUILD_RS_MODIFIED`** | `build.rs` present in both, but the published content differs from the git source (newline-normalised). |
 | **`BINARY_NOT_IN_GIT`** | A precompiled `.so/.dll/.exe/.dylib/.wasm` shipped in the artifact but not in source. |
 | **`CHECKSUM_MISMATCH`** | The downloaded artifact's sha256 does not match the checksum crates.io recorded — CDN/artifact tampering. |
@@ -31,6 +32,38 @@ raises a desktop notification. `info` flags are surfaced but don't mark the
 package suspicious.
 
 ![cargo-witness scanning a lockfile that pins the withdrawn arrayref 0.3.10](docs/screenshot-scan.png)
+
+## The manifest lane (catching arrayref *inside* the attack window)
+
+The August 2026 arrayref compromise added exactly one line to the published
+`Cargo.toml`: a dependency on the typosquat `proc-macro1`, whose build script
+executes a remote payload. The crate's own source was untouched, so no file
+diff fires, and `VERSION_REMOVED` only fires after crates.io deletes the
+version, up to 107 minutes later. `DEP_INJECTED` closes that window: the
+dependency **names** declared in the artifact's manifest (across
+`[dependencies]`, `[build-dependencies]`, `[dev-dependencies]` and every
+`[target.<cfg>.*dependencies]` table, resolving `package = "..."` renames to
+the real crate name) are compared against the git-side manifest at the same
+resolved commit and subdirectory, with `workspace = true` entries resolved
+against the repository root's `[workspace.dependencies]`.
+
+Names only, never versions: cargo rewrites the manifest at package time
+(inlines workspace inheritance, rewrites path deps, reorders keys), which is
+why a byte diff of `Cargo.toml` would flag nearly every crate and is skipped.
+Every unknown suppresses the flag rather than guessing: a truncated git tree,
+a manifest that fails to parse on either side, an unresolvable workspace
+inheritance, or a git-side manifest that turns out to belong to a different
+crate (a mis-resolved tag in a multi-crate repo) all suppress instead.
+`--diff <name> <version>` explains any suppression and
+prints both dependency sets side by side.
+
+The git-side manifest has to be read as content, not as a tree entry, so this
+costs one extra blob fetch per crate (cached per repo, ref and path, so
+workspace siblings and a shared workspace root reuse one fetch). Set
+`GITHUB_TOKEN` when scanning large lockfiles. If the git host rate-limits
+mid-scan, the comparison stops for the rest of the run rather than guessing.
+
+![DEP_INJECTED on the arrayref-shaped injection, reconstructed in an offline fixture (the real 0.3.10 artifact is deleted)](docs/screenshot-diff-dep.png)
 
 ## Why this catches what a `git clone` review misses
 
@@ -163,7 +196,10 @@ On Aug 20, 2026 the Rust Security Response Team disclosed a
 time**. crates.io's response was to **delete** the versions. cargo-witness
 treats that deletion as the signal it is: a lockfile pinning a withdrawn
 version gets a HIGH `VERSION_REMOVED` / `CRATE_REMOVED` finding and a non-zero
-exit under the default `--fail-on medium`.
+exit under the default `--fail-on medium`. And since 1.4.0 the manifest lane
+catches the injection itself: the added `proc-macro1` dependency line fires
+`DEP_INJECTED` from the artifact-versus-git comparison alone, inside the live
+window, with no need for the registry to have reacted yet.
 
 To be accurate about what cargo already does: a **cold** build does fail when a
 locked version has vanished from the index, but with a famously unhelpful
@@ -279,11 +315,14 @@ already primed by that attack.
 ## Tests
 
 ```bash
-npm test        # 6 suites, 49 assertions
+npm test        # 7 suites, 96 assertions
 ```
 
 - `differ.test.js` — blob-SHA diff, workspace false-positive fix, real-attack
   detection, truncated-tree handling, content-suspect detection.
+- `manifest.test.js` — dependency-name extraction (all tables, renames,
+  workspace inheritance), the injected-dependency case, and every conservative
+  suppression (truncated tree, unparseable manifest, unresolvable inheritance).
 - `cargo-lock.test.js` — lockfile parser (registry vs git/local, CRLF, alt registries).
 - `ci-diff.test.js` — CI added-package diff parsing.
 - `units.test.js` — severity model, allowlist suppression, SARIF shape, diff algorithm.
@@ -291,6 +330,6 @@ npm test        # 6 suites, 49 assertions
 - `integration.test.js` — **fully offline** end-to-end: a local mock server serves
   crates.io / static CDN / GitHub (with real blob SHAs), real `.crate` tarballs are
   built on the fly, and every detection (`BUILD_RS_INJECTED`, `BUILD_RS_MODIFIED`,
-  `SOURCE_MODIFIED`, `FILE_NOT_IN_GIT`, `BINARY_NOT_IN_GIT`, `CHECKSUM_MISMATCH`,
-  `YANKED`, `TRUSTED_PUBLISH`, `VCS_MISMATCH`, exact-commit + `path_in_vcs`
-  resolution, workspace resolution, allowlist) is asserted.
+  `DEP_INJECTED`, `SOURCE_MODIFIED`, `FILE_NOT_IN_GIT`, `BINARY_NOT_IN_GIT`,
+  `CHECKSUM_MISMATCH`, `YANKED`, `TRUSTED_PUBLISH`, `VCS_MISMATCH`, exact-commit
+  + `path_in_vcs` resolution, workspace resolution, allowlist) is asserted.
