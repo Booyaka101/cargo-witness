@@ -404,6 +404,10 @@ async function endToEnd() {
     return plain(out);
   };
 
+  /** Age every stored row past the 24h re-check window. */
+  const staleAll = (db) =>
+    db._db.prepare('UPDATE packages SET meta_checked_at = ?').run(Date.now() - 25 * 3600 * 1000);
+
   const withGate = await scan(ALL, gate());
   const by = {};
   for (const r of withGate.results) by[r.name] = r;
@@ -621,10 +625,12 @@ async function endToEnd() {
     assert.strictEqual(first.results[0].status, 'SUSPICIOUS', JSON.stringify(first.results[0]));
     assert.strictEqual(db.getStoredStatus('fresh', '1.2.3').status, 'SUSPICIOUS');
 
-    // Same pin, same store, now with a threshold it has cleared. recheckMaxAgeMs
-    // of 0 makes the row due; the flag is recomputed, not carried.
+    // Same pin, same store, now with a threshold it has cleared. Backdate the
+    // row so it is unambiguously due: `recheckMaxAgeMs: 0` puts the cutoff at
+    // Date.now(), which a same-millisecond second run would tie with and skip.
+    staleAll(db);
     const later = await runScan({
-      packages: pkg, db, log: () => {}, recheckMaxAgeMs: 0,
+      packages: pkg, db, log: () => {},
       publishAge: { raw: '1 second', ms: 1000, excludes: [] },
     });
     assert.strictEqual(later.rechecked.length, 1, JSON.stringify(later.rechecked));
@@ -643,10 +649,10 @@ async function endToEnd() {
     const before = await runScan({ packages: pkg, db, log: () => {} });
     assert.strictEqual(before.results[0].status, 'CLEAN');
 
-    const after = await runScan({
-      packages: pkg, db, log: () => {}, recheckMaxAgeMs: 0, publishAge: gate(),
-    });
+    staleAll(db);
+    const after = await runScan({ packages: pkg, db, log: () => {}, publishAge: gate() });
     assert.strictEqual(after.results.length, 0, 'pass 1 skips an already-checked pin');
+    assert.strictEqual(after.rechecked.length, 1, JSON.stringify(after.rechecked));
     assert.strictEqual(after.rechecked[0].status, 'SUSPICIOUS', JSON.stringify(after.rechecked));
     assert.strictEqual(after.publishAge.gatedCount, 1);
     assert.deepStrictEqual(after.suspicious.map((x) => x.name), ['fresh']);
