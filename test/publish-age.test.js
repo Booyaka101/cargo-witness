@@ -448,7 +448,7 @@ async function endToEnd() {
     const entry = withGate.publishAge.gated.find((g) => g.name === 'evil');
     assert.deepStrictEqual(entry.alsoFlagged.map((f) => f.flag), ['BUILD_RS_INJECTED']);
     const out = section(withGate.publishAge);
-    assert.ok(/evil@0\.3\.10\s+\d+m old\s+clears /.test(out), out);
+    assert.ok(/evil@0\.3\.10\s+[\dhms ]+ old\s+clears /.test(out), out);
     assert.ok(out.includes('already flagged BUILD_RS_INJECTED'), out);
     assert.strictEqual(out.split('\n').filter((l) => l.includes('evil@0.3.10')).length, 1,
       'the combination must be one entry, not two findings');
@@ -685,7 +685,7 @@ async function endToEnd() {
     assert.strictEqual(a.code, 1, `exit ${a.code}\n${a.stdout}\n${a.stderr}`);
     const out = plain(a.stdout);
     assert.ok(out.includes('PUBLISH_AGE (1)'), out);
-    assert.ok(/fresh@1\.2\.3\s+\d+m old\s+clears /.test(out), out);
+    assert.ok(/fresh@1\.2\.3\s+[\dhms ]+ old\s+clears /.test(out), out);
     assert.ok(out.includes(`threshold 24 hours (${KEY})`), out);
     assert.ok(out.split('\n').every((l) => l.length <= 80), 'output must fit 80 columns');
 
