@@ -1,6 +1,6 @@
 {
   "name": "cargo-witness",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "Autonomous daemon that diffs published Rust crate artifacts against their git source to detect supply-chain attacks (injected/modified build.rs, unexpected binaries, checksum mismatch).",
   "bin": {
     "cargo-witness": "bin/cargo-witness.js"
@@ -32,7 +32,10 @@
     "crates.io",
     "onering",
     "sbom",
-    "dependency-scanning"
+    "dependency-scanning",
+    "min-publish-age",
+    "cooldown",
+    "rfc-3923"
   ],
   "author": "cargo-witness",
   "license": "MIT",
