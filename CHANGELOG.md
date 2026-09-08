@@ -5,6 +5,99 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2026-09-08
+
+### Added
+
+- **Publish-age gate: `PUBLISH_AGE` (medium), opt-in via `--min-publish-age`.**
+  The three arrayref-wave versions were online for 86, 90 and 107 minutes each,
+  and `VERSION_REMOVED` only fires once crates.io has deleted them, which is by
+  definition after the fact. `DEP_INJECTED` covers one shape of that attack, the
+  added manifest line, and it needs a resolvable git side: 1.4.0 lists five
+  conditions under which it honestly suppresses itself. This check covers all
+  three of those compromises and every shape they could have taken, because it
+  asks a different question. It asks how old the pinned version is. Any
+  threshold at all sits a two-hour window out.
+
+  It detects nothing. It declines to go first.
+
+  `--min-publish-age "24 hours"` reads every `registry+` entry in the committed
+  `Cargo.lock`, compares its crates.io `created_at` against the threshold, and
+  flags each pin that is younger. The duration grammar is RFC 3923's, parsed
+  exactly as cargo's own `time_span.rs` parses it (integer, at most one space,
+  then `seconds`/`minutes`/`hours`/`days`/`weeks`/`months` singular or plural,
+  a month being 2,629,746 seconds; `"0"` disables), so one policy string serves
+  both cargo's resolver and this audit. The finding appears in the report, in
+  `--json` (a per-package `publishAge` object plus a top-level threshold), in
+  SARIF at level `warning`, in `--diff`, and in the desktop notification, and it
+  is exemptible per crate with `--min-publish-age-exclude` (name or
+  `name@version`) or through the existing allowlist.
+
+- **`--write-cargo-config`** writes `registry.global-min-publish-age` into
+  `.cargo/config.toml` line by line, so every other key, comment, blank line and
+  the file's EOL style survive. Both spellings cargo accepts are handled, the
+  `[registry]` table and a top-level dotted `registry.global-min-publish-age`,
+  and whichever the file already uses is the one it keeps: TOML forbids mixing
+  them, and appending a table next to a dotted key makes cargo refuse to load
+  the config at all. It prints what the value was before it changes
+  it and never overwrites in silence, and it reads the installed cargo rather
+  than asserting anything about it: on a toolchain older than 1.100 it says the
+  file is inert until you upgrade. Exemptions round-trip through a marker
+  comment, because RFC 3923 defers a per-package exclude list to future work and
+  cargo ships no key for one; inventing a key would make the file this tool just
+  wrote a file cargo complains about. If the file already sets
+  `resolver.incompatible-publish-age = "allow"`, which turns cargo's resolver
+  gate off entirely, that is printed as a note and left alone.
+
+### Changed
+
+- **This changes verdicts only when you ask for it.** With `--min-publish-age`
+  absent, output is byte-identical to 1.4.0, verified by diffing the full test
+  run over every existing fixture, where all 144 lines match. Passing the flag
+  is the only thing that can add an exit code, and a gated crate is `medium`, so
+  it fails the default `--fail-on medium` gate.
+- A crate that trips `PUBLISH_AGE` **and** a high or medium flag from another
+  lane is reported as one entry saying both, not two unrelated findings. That
+  combination is the emergency, and its SARIF result is raised from `warning`
+  to `error`.
+- The gate runs off registry metadata alone and is decided before any artifact
+  download or git resolution, so it still fires when the git side cannot be
+  resolved. Confirmed live on `tatara-kube@0.2.595`, which reports `NO_GIT_TAG`
+  with the flag absent and `PUBLISH_AGE` with it set.
+- Edge cases, each handled rather than guessed: a version with no `created_at`
+  is reported `unchecked` and never blocked, because mirrors and alternate
+  registries legitimately have none and RFC 3923's own applicability section
+  exempts them; a version exactly at the threshold has cleared it; git and path
+  dependencies never reach the gate, for the same reason the RFC exempts them;
+  a crate whose whole packument 404s stays `VERSION_REMOVED`/`CRATE_REMOVED`'s
+  finding and is not double-reported; an unparseable duration exits 2 naming the
+  accepted units.
+
+### Scope, accurately
+
+Cargo does have this feature. `rust-lang/cargo#17335`, "feat(resolver):
+Stabilize min-publish-age", merged 2026-08-28 for Rust 1.100, after
+`-Zmin-publish-age` on nightly since 2026-06-21. What cargo gates is
+**resolution**: with `resolver.incompatible-publish-age = "deny"` the resolver
+"will ignore these versions unless they already exist in the `Cargo.lock`
+file", and "once the versions are recorded in `Cargo.lock`, subsequent resolves
+will keep them". A young version that is already pinned, or that was forced
+through with `CARGO_RESOLVER_INCOMPATIBLE_PUBLISH_AGE=allow`, which #17335's
+own summary says is "preserved within the lockfile", is invisible to the
+resolver from then on. The committed lockfile is the half this audits.
+
+Note that the stabilized key set is `registry.global-min-publish-age`,
+`registries.<name>.min-publish-age` and `resolver.incompatible-publish-age`.
+The RFC's `registry.min-publish-age` did not ship; #17335 dropped it to avoid
+confusion between `[registry]` and `[registries.crates-io]`.
+
+Prior art: [cargo-cooldown](https://github.com/dertin/cargo-cooldown), a cargo
+wrapper that "lets Cargo resolve the graph, then replaces fresh versions with
+the newest older compatible versions". That is a different job on the other
+side of the line. Its own README points CI and release automation at "plain
+Cargo against committed `Cargo.lock` files", and those committed lockfiles are
+what this reads. RFC 3923 is where the vocabulary comes from.
+
 ## [1.4.0] - 2026-08-30
 
 ### Added
@@ -196,6 +289,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Workspace-subdirectory resolution to locate a crate's source within a
   multi-crate repository.
 
+[1.5.0]: https://github.com/Booyaka101/cargo-witness/releases/tag/v1.5.0
 [1.4.0]: https://github.com/Booyaka101/cargo-witness/releases/tag/v1.4.0
 [1.3.0]: https://github.com/Booyaka101/cargo-witness/releases/tag/v1.3.0
 [1.2.0]: https://github.com/Booyaka101/cargo-witness/releases/tag/v1.2.0
