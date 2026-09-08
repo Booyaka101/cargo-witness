@@ -404,6 +404,10 @@ async function endToEnd() {
     return plain(out);
   };
 
+  /** Age every stored row past the 24h re-check window. */
+  const staleAll = (db) =>
+    db._db.prepare('UPDATE packages SET meta_checked_at = ?').run(Date.now() - 25 * 3600 * 1000);
+
   const withGate = await scan(ALL, gate());
   const by = {};
   for (const r of withGate.results) by[r.name] = r;
@@ -444,7 +448,7 @@ async function endToEnd() {
     const entry = withGate.publishAge.gated.find((g) => g.name === 'evil');
     assert.deepStrictEqual(entry.alsoFlagged.map((f) => f.flag), ['BUILD_RS_INJECTED']);
     const out = section(withGate.publishAge);
-    assert.ok(/evil@0\.3\.10\s+\d+m old\s+clears /.test(out), out);
+    assert.ok(/evil@0\.3\.10\s+[\dhms ]+ old\s+clears /.test(out), out);
     assert.ok(out.includes('already flagged BUILD_RS_INJECTED'), out);
     assert.strictEqual(out.split('\n').filter((l) => l.includes('evil@0.3.10')).length, 1,
       'the combination must be one entry, not two findings');
@@ -621,10 +625,12 @@ async function endToEnd() {
     assert.strictEqual(first.results[0].status, 'SUSPICIOUS', JSON.stringify(first.results[0]));
     assert.strictEqual(db.getStoredStatus('fresh', '1.2.3').status, 'SUSPICIOUS');
 
-    // Same pin, same store, now with a threshold it has cleared. recheckMaxAgeMs
-    // of 0 makes the row due; the flag is recomputed, not carried.
+    // Same pin, same store, now with a threshold it has cleared. Backdate the
+    // row so it is unambiguously due: `recheckMaxAgeMs: 0` puts the cutoff at
+    // Date.now(), which a same-millisecond second run would tie with and skip.
+    staleAll(db);
     const later = await runScan({
-      packages: pkg, db, log: () => {}, recheckMaxAgeMs: 0,
+      packages: pkg, db, log: () => {},
       publishAge: { raw: '1 second', ms: 1000, excludes: [] },
     });
     assert.strictEqual(later.rechecked.length, 1, JSON.stringify(later.rechecked));
@@ -643,10 +649,10 @@ async function endToEnd() {
     const before = await runScan({ packages: pkg, db, log: () => {} });
     assert.strictEqual(before.results[0].status, 'CLEAN');
 
-    const after = await runScan({
-      packages: pkg, db, log: () => {}, recheckMaxAgeMs: 0, publishAge: gate(),
-    });
+    staleAll(db);
+    const after = await runScan({ packages: pkg, db, log: () => {}, publishAge: gate() });
     assert.strictEqual(after.results.length, 0, 'pass 1 skips an already-checked pin');
+    assert.strictEqual(after.rechecked.length, 1, JSON.stringify(after.rechecked));
     assert.strictEqual(after.rechecked[0].status, 'SUSPICIOUS', JSON.stringify(after.rechecked));
     assert.strictEqual(after.publishAge.gatedCount, 1);
     assert.deepStrictEqual(after.suspicious.map((x) => x.name), ['fresh']);
@@ -679,7 +685,7 @@ async function endToEnd() {
     assert.strictEqual(a.code, 1, `exit ${a.code}\n${a.stdout}\n${a.stderr}`);
     const out = plain(a.stdout);
     assert.ok(out.includes('PUBLISH_AGE (1)'), out);
-    assert.ok(/fresh@1\.2\.3\s+\d+m old\s+clears /.test(out), out);
+    assert.ok(/fresh@1\.2\.3\s+[\dhms ]+ old\s+clears /.test(out), out);
     assert.ok(out.includes(`threshold 24 hours (${KEY})`), out);
     assert.ok(out.split('\n').every((l) => l.length <= 80), 'output must fit 80 columns');
 
