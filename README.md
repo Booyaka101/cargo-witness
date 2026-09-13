@@ -509,7 +509,7 @@ already primed by that attack.
 ## Tests
 
 ```bash
-npm test        # 9 suites, 163 assertions
+npm test        # 9 suites, 164 assertions
 ```
 
 - `action-runtime.test.js` — `action.yml` declares a runtime GitHub still runs,

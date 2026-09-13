@@ -113,5 +113,17 @@ check('validate-action still fails on a schema error that is not the runtime', (
   assert.match(r.stderr, /bogus-top-level/);
 });
 
+check('engines.node is not below what our dependencies require', () => {
+  // better-sqlite3 is a native module. On a Node it does not support it does not
+  // throw, it segfaults, which reads as a phantom crash rather than a bad
+  // install. Claiming a floor lower than any dependency's is how that happens.
+  const ours = require('../package.json').engines.node;
+  const floor = (spec) => Number(String(spec).replace(/[^\d.]/g, '').split('.')[0]);
+  for (const dep of ['better-sqlite3']) {
+    const theirs = require(`${dep}/package.json`).engines.node;
+    assert.ok(floor(ours) >= floor(theirs), `package.json says node ${ours} but ${dep} needs ${theirs}`);
+  }
+});
+
 console.log(`\n${passed} assertions passed.`);
 console.log(process.exitCode ? 'SOME TESTS FAILED' : 'ALL TESTS PASSED');

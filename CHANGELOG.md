@@ -18,12 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to Node 24 since 2026-06-16, so this is a change of declaration, not of
   behaviour.
 
-  Nothing else moved. `dist/action.js` is byte-identical to 1.5.0, and the
-  bundle was driven end to end on a real lockfile under both Node 20.20.2 and
-  Node 24.21.0: the JSON report, the SARIF file, the `suspicious-count` /
-  `suspicious` step outputs and the job summary all hash the same under each.
-  (The progress lines on stderr interleave differently from run to run on one
-  Node version too, because five fetches run concurrently; sorted, they match.)
+  No logic moved. The only change in `dist/action.js` is the version string
+  `ncc` inlines from `package.json`, `1.5.0` to `1.6.0`. The rebuilt bundle was
+  driven end to end on a real lockfile under both Node 20.20.2 and Node 24.21.0:
+  stdout, stderr, the SARIF file, the `suspicious-count` / `suspicious` step
+  outputs and the job summary all hash the same under each.
 
 - **`npm run validate:action` keeps the validator but stops it vetoing the
   runtime.** `@action-validator/core` last published 0.6.0 on **2024-02-23** and
@@ -38,6 +37,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the runtime string was the only objection and the file passes. Any other
   error, at any path, still fails the build, which is covered by a test that
   plants an unrelated schema violation and asserts a non-zero exit.
+
+### Fixed
+
+- **`engines.node` claimed `>=18`, which has not been true since the
+  better-sqlite3 13 bump.** That dependency declares `engines.node >=22`, and on
+  an older Node it does not throw, it segfaults: `--scan`, `--history` and
+  `--daemon` die with exit 139 and an empty stderr, which reads as a phantom
+  crash rather than as an unsupported Node. Reproduced here on Node 20.20.2 and
+  clean on 24.21.0. The field now says `>=22` and a test fails if it ever drops
+  below what a dependency needs again. The Action itself is unaffected either
+  way: `dist/action.js` contains no native module, which is why it runs on
+  node24 at all.
 
 ### Added
 
