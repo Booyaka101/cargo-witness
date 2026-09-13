@@ -13,6 +13,7 @@ const files = [
   'units.test.js',
   'hosts.test.js',
   'integration.test.js',
+  'action-runtime.test.js',
 ];
 
 let failed = 0;

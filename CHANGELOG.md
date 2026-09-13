@@ -5,6 +5,57 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0] - 2026-09-13
+
+### Changed
+
+- **`action.yml` now declares `runs.using: node24`.** GitHub removes the Node 20
+  runtime from the Actions runners on **2026-09-23**, and the
+  `ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION` opt-out expires on the same day. An
+  action still declaring `node20` does not launch after that: the runner cannot
+  find the interpreter, so a consumer's `- uses: your-org/cargo-witness@v1` step
+  fails before any of this code runs, with no fallback. Runners have defaulted
+  to Node 24 since 2026-06-16, so this is a change of declaration, not of
+  behaviour.
+
+  Nothing else moved. `dist/action.js` is byte-identical to 1.5.0, and the
+  bundle was driven end to end on a real lockfile under both Node 20.20.2 and
+  Node 24.21.0: the JSON report, the SARIF file, the `suspicious-count` /
+  `suspicious` step outputs and the job summary all hash the same under each.
+  (The progress lines on stderr interleave differently from run to run on one
+  Node version too, because five fetches run concurrently; sorted, they match.)
+
+- **`npm run validate:action` keeps the validator but stops it vetoing the
+  runtime.** `@action-validator/core` last published 0.6.0 on **2024-02-23** and
+  compiles its schema into a wasm blob, so the `runs.using` enum it carries is
+  `node12` / `node16` / `node20` and there is no newer copy to point it at. A
+  2024 schema was deciding which 2026 runtime we ship.
+
+  Deleting the check was the wrong fix, and patching a schema out of a wasm blob
+  is not a thing to maintain. `scripts/validate-action.js` runs
+  `@action-validator/cli` as before; if it fails, it re-validates the same file
+  with `using` swapped for one the schema accepts. If that clears every error,
+  the runtime string was the only objection and the file passes. Any other
+  error, at any path, still fails the build, which is covered by a test that
+  plants an unrelated schema violation and asserts a non-zero exit.
+
+### Added
+
+- **`test/action-runtime.test.js`** asserts `runs.using` names a runtime GitHub
+  still runs, and fails once the declared runtime is within 180 days of its
+  removal date, not on the day it breaks. Setting `action.yml` back to `node20`
+  turns this suite red today. The next runtime deadline arrives as a failing
+  test rather than as a broken workflow.
+
+- **README: runner requirements.** Node 24 needs macOS >= 13.5, and Node.js
+  publishes no `linux-armv7l` build for 24 at all, so ARM32 self-hosted runners
+  cannot run this action. Both are stated rather than glossed.
+
+### Internal
+
+- `validate:action` now runs in CI. It was a local-only script before, so the
+  schema check never gated a pull request.
+
 ## [1.5.0] - 2026-09-08
 
 ### Added

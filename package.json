@@ -1,6 +1,6 @@
 {
   "name": "cargo-witness",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "description": "Autonomous daemon that diffs published Rust crate artifacts against their git source to detect supply-chain attacks (injected/modified build.rs, unexpected binaries, checksum mismatch).",
   "bin": {
     "cargo-witness": "bin/cargo-witness.js"
@@ -19,7 +19,7 @@
     "scan": "node bin/cargo-witness.js --scan",
     "report": "node bin/cargo-witness.js --report",
     "build:action": "ncc build src/action.js -o dist --minify && node -e \"require('fs').renameSync('dist/index.js','dist/action.js')\"",
-    "validate:action": "action-validator action.yml",
+    "validate:action": "node scripts/validate-action.js",
     "test": "node test/run.js",
     "prepublishOnly": "npm run build:action && npm test"
   },
