@@ -59,8 +59,10 @@ check('a runtime inside the lead window is rejected while it still works', () =>
 check('a runtime with no announced removal passes', () => {
   // Read the open runtimes out of the table rather than naming node24. The day
   // node24 gets a removal date, the test that should go red is the first one.
-  const open = Object.keys(RUNTIMES).filter((k) => RUNTIMES[k].removedOn === null);
-  assert.ok(open.length, 'every known runtime has a removal date; there is nothing left to move to');
+  // Node runtimes only: composite and docker are not interpreters and never
+  // get a removal date, so including them would make the guard below unfailable.
+  const open = Object.keys(RUNTIMES).filter((k) => /^node/.test(k) && RUNTIMES[k].removedOn === null);
+  assert.ok(open.length, 'every Node runtime in the table has a removal date; there is nothing left to move to');
   for (const k of open) assert.strictEqual(checkRuntime(k).ok, true, k);
 });
 
@@ -116,6 +118,31 @@ check('validate-action still fails on a schema error that is not the runtime', (
   fs.rmSync(dir, { recursive: true, force: true });
   assert.strictEqual(r.status, 1, 'a real schema error must still fail the build');
   assert.match(r.stderr, /bogus-top-level/);
+});
+
+check('validate-action does not narrow a runtime the schema already accepts', () => {
+  // `using: composite` with `main:` and no `steps:` is genuinely invalid, and
+  // composite is in the 0.6.0 enum. Probing it as node20 makes it validate
+  // clean, so the wrapper used to pass it and blame the runtime enum.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-composite-'));
+  const write = (body) => {
+    const p = path.join(dir, 'action.yml');
+    fs.writeFileSync(p, body);
+    return cp.spawnSync(process.execPath, [VALIDATE, p], { encoding: 'utf8' });
+  };
+  const bad = write('name: x\ndescription: y\nruns:\n  using: composite\n  main: dist/index.js\n');
+  assert.strictEqual(bad.status, 1, bad.stdout + bad.stderr);
+
+  // And what it reports is the file's own error, not the oneOf spray the probe
+  // produces by rewriting a valid composite action into an invalid node20 one.
+  const noisy = write([
+    'bogus-top-level: 1', 'name: x', 'description: y', 'runs:', '  using: composite',
+    '  steps:', '    - run: echo hi', '      shell: bash', '',
+  ].join('\n'));
+  assert.strictEqual(noisy.status, 1);
+  assert.match(noisy.stderr, /bogus-top-level/);
+  assert.doesNotMatch(noisy.stderr, /one_of/, 'the probe invented errors from another branch of the runs oneOf');
+  fs.rmSync(dir, { recursive: true, force: true });
 });
 
 check('engines.node is not below what our dependencies require', () => {
