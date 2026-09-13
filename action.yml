@@ -41,5 +41,5 @@ outputs:
   suspicious:
     description: JSON array of suspicious packages (name, version, flags)
 runs:
-  using: node20
+  using: node24
   main: dist/action.js

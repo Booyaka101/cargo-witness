@@ -5,6 +5,71 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0] - 2026-09-13
+
+### Changed
+
+- **`action.yml` now declares `runs.using: node24`.** GitHub removes the Node 20
+  runtime from the Actions runners on **2026-09-23**, and the
+  `ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION` opt-out expires on the same day. An
+  action still declaring `node20` does not launch after that: the runner cannot
+  find the interpreter, so a consumer's `- uses: your-org/cargo-witness@v1` step
+  fails before any of this code runs, with no fallback. Runners have defaulted
+  to Node 24 since 2026-06-16, so this is a change of declaration, not of
+  behaviour.
+
+  No logic moved. The only change in `dist/action.js` is the version string
+  `ncc` inlines from `package.json`, `1.5.0` to `1.6.0`. The rebuilt bundle was
+  driven end to end on a real lockfile under both Node 20.20.2 and Node 24.21.0:
+  stdout, stderr, the SARIF file, the `suspicious-count` / `suspicious` step
+  outputs and the job summary all hash the same under each.
+
+- **`npm run validate:action` keeps the validator but stops it vetoing the
+  runtime.** `@action-validator/core` last published 0.6.0 on **2024-02-23** and
+  compiles its schema into a wasm blob, so the `runs.using` enum it carries is
+  `node12` / `node16` / `node20` and there is no newer copy to point it at. A
+  2024 schema was deciding which 2026 runtime we ship.
+
+  Deleting the check was the wrong fix, and patching a schema out of a wasm blob
+  is not a thing to maintain. `scripts/validate-action.js` runs
+  `@action-validator/cli` as before; if it fails, it re-validates the same file
+  with `using` swapped for one the schema accepts. If that clears every error,
+  the runtime string was the only objection and the file passes. Any other
+  error, at any path, still fails the build, which is covered by a test that
+  plants an unrelated schema violation and asserts a non-zero exit.
+
+### Fixed
+
+- **`engines.node` claimed `>=18`, which has not been true since the
+  better-sqlite3 13 bump.** That dependency declares `engines.node >=22`, and on
+  an older Node it does not throw, it segfaults: `--scan`, `--history` and
+  `--daemon` die with exit 139 and an empty stderr, which reads as a phantom
+  crash rather than as an unsupported Node. Reproduced here on Node 20.20.2 and
+  clean on 24.21.0. The field now says `>=22` and a test fails if it ever drops
+  below what a dependency needs again. `CONTRIBUTING.md` and `docs/LAUNCH.md`
+  repeated the `18+` claim and now say 22. The Action itself is unaffected
+  either way: `dist/action.js` contains no native module, which is why it runs
+  on node24 at all.
+
+### Added
+
+- **`test/action-runtime.test.js`** asserts `runs.using` names a runtime GitHub
+  still runs, and fails once the declared runtime is within 180 days of its
+  removal date, not on the day it breaks. Setting `action.yml` back to `node20`
+  turns this suite red today. The next runtime deadline arrives as a failing
+  test rather than as a broken workflow.
+
+- **README: runner requirements.** Node 24 needs macOS >= 13.5, and Node.js
+  publishes no `linux-armv7l` build for 24 at all, so ARM32 self-hosted runners
+  cannot run this action. Both are stated rather than glossed.
+
+### Internal
+
+- `action.yml` is now schema-checked on every pull request. Nothing validated it
+  before. The test suite drives `scripts/validate-action.js` directly, so the
+  check lives with the rest of the assertions rather than as a separate CI step
+  that could only ever repeat them.
+
 ## [1.5.0] - 2026-09-08
 
 ### Added

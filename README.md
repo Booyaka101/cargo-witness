@@ -422,6 +422,23 @@ persistent SQLite store for cross-run history.
 A ready-to-copy example is in
 [`docs/example-workflow.yml`](docs/example-workflow.yml).
 
+### Runner requirements
+
+The action runs on `node24`, so it needs a runner image that ships Node 24.
+Every image GitHub currently supports does, but two cases do not:
+
+- **macOS 13.4 and older, including a `macos-13` runner that has not been
+  patched past 13.4.** Node 24 requires macOS >= 13.5, so the runtime will not
+  start. `macos-14` and later are fine.
+- **ARM32 runners (`linux/arm`, armv7l, 32-bit Raspberry Pi and similar).**
+  Node.js publishes no `linux-armv7l` build for 24 at all (20 had one), and
+  armv7 was downgraded to Experimental in Node 24, so there is nothing for the
+  runner to launch. ARM64 is unaffected.
+
+If you are on one of those, `cargo-witness@v1.5.0` still declares `node20`, but
+only until 2026-09-23. After that date GitHub removes the Node 20 runtime from
+the runners and v1.5.0 stops launching anywhere.
+
 ## Docker
 
 ```bash
@@ -468,9 +485,19 @@ already primed by that attack.
 - The API's `dl_path` (`/api/v1/crates/{n}/{v}/download`) is a crates.io redirect
   path, **not** a static.crates.io path — prefixing it onto `static.crates.io`
   returns **403**. cargo-witness downloads from the direct CDN pattern instead.
-- `action.yml` uses `using: node20` (current LTS runner, and the value that
-  passes `action-validator`). GitHub also supports `node24`; swap it in once your
-  `action-validator` schema includes it.
+- `action.yml` uses `using: node24`. GitHub removes Node 20 from the runners on
+  **2026-09-23**, and an action declaring `node20` will not launch after that.
+  The runner cannot find the interpreter, so the step fails before any of this
+  code runs. `test/action-runtime.test.js` fails if `runs.using` names a runtime
+  that is gone or within 180 days of going, so the next move is a red test
+  rather than a broken workflow.
+- `npm run validate:action` still runs `@action-validator/cli`, but no longer
+  lets it veto the runtime. Its schema was last published on 2024-02-23 and is
+  compiled into a wasm blob, so its `runs.using` enum stops at `node20` and
+  cannot be pointed at a newer copy. The wrapper re-validates the file with the
+  runtime swapped for one the schema accepts: if that clears every error, the
+  runtime string was the only objection and the rest of the file is valid.
+  Anything else the validator reports still fails.
 - Content comparison uses the **git blob SHA** returned by the trees API
   (`sha1("blob "+len+"\0"+content)`), so every shared file is content-checked with
   **no extra network calls**; only a SHA mismatch triggers a raw fetch, which is
@@ -482,9 +509,11 @@ already primed by that attack.
 ## Tests
 
 ```bash
-npm test        # 8 suites, 152 assertions
+npm test        # 9 suites, 165 assertions
 ```
 
+- `action-runtime.test.js` — `action.yml` declares a runtime GitHub still runs,
+  and the scoped `validate:action` gate still fails on any other schema error.
 - `differ.test.js` — blob-SHA diff, workspace false-positive fix, real-attack
   detection, truncated-tree handling, content-suspect detection.
 - `publish-age.test.js` — the RFC 3923 duration grammar against cargo's own
