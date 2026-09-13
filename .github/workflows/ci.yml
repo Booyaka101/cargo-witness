@@ -34,11 +34,6 @@ jobs:
       - name: Run tests
         run: npm test
 
-      # The schema check, minus the stale runs.using enum. See
-      # scripts/validate-action.js for why the wrapper exists.
-      - name: Validate action.yml
-        run: npm run validate:action
-
       - name: Rebuild Action bundle
         run: npm run build:action
 

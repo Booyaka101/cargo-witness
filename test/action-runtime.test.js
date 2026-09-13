@@ -57,13 +57,19 @@ check('a runtime inside the lead window is rejected while it still works', () =>
 });
 
 check('a runtime with no announced removal passes', () => {
-  assert.strictEqual(checkRuntime('node24').ok, true);
-  assert.strictEqual(RUNTIMES.node24.removedOn, null);
+  // Read the open runtimes out of the table rather than naming node24. The day
+  // node24 gets a removal date, the test that should go red is the first one.
+  const open = Object.keys(RUNTIMES).filter((k) => RUNTIMES[k].removedOn === null);
+  assert.ok(open.length, 'every known runtime has a removal date; there is nothing left to move to');
+  for (const k of open) assert.strictEqual(checkRuntime(k).ok, true, k);
 });
 
 check('an unknown runtime is rejected', () => {
-  assert.strictEqual(checkRuntime('node26').ok, false);
+  // Not a plausible future runtime name: `node26` would fail here the day
+  // GitHub ships it, which has nothing to do with what this asserts.
+  assert.strictEqual(checkRuntime('nodejs-latest').ok, false);
   assert.strictEqual(checkRuntime(null).ok, false);
+  assert.strictEqual(checkRuntime('').ok, false);
 });
 
 check('LEAD_DAYS gives real notice', () => {
@@ -71,17 +77,15 @@ check('LEAD_DAYS gives real notice', () => {
 });
 
 check('readUsing handles quotes, comments and an absent key', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-using-'));
-  const write = (body) => {
-    const p = path.join(dir, 'action.yml');
-    fs.writeFileSync(p, body);
-    return p;
-  };
-  assert.strictEqual(readUsing(write("runs:\n  using: 'node24'\n  main: x.js\n")), 'node24');
-  assert.strictEqual(readUsing(write('runs:\n  using: node24 # pinned\n  main: x.js\n')), 'node24');
+  assert.strictEqual(readUsingFrom("runs:\n  using: 'node24'\n  main: x.js\n"), 'node24');
+  assert.strictEqual(readUsingFrom('runs:\n  using: node24 # pinned\n  main: x.js\n'), 'node24');
+  // A comment or blank line at column 0 belongs to no block, so it must not end
+  // `runs:`. action-validator accepts such a file, and we used to read it as
+  // declaring no runtime at all and hard-fail on a valid action.
+  assert.strictEqual(readUsingFrom('runs:\n# note\n\n  using: node24\n  main: x.js\n'), 'node24');
   // `using` under some other top-level key is not the action's runtime.
-  assert.strictEqual(readUsing(write('inputs:\n  using:\n    default: node20\n')), null);
-  fs.rmSync(dir, { recursive: true, force: true });
+  assert.strictEqual(readUsingFrom('inputs:\n  using:\n    default: node20\n'), null);
+  assert.strictEqual(readUsingFrom('runs:\n  main: x.js\nbranding:\n  using: node20\n'), null);
 });
 
 check('withRuntime rewrites runs.using and nothing else', () => {
@@ -96,6 +100,7 @@ check('withRuntime rewrites runs.using and nothing else', () => {
   assert.ok(swapped.includes('    default: node20'));
   assert.ok(swapped.includes("  using: 'node20'"), 'the original quote style survives');
   assert.strictEqual(withRuntime('name: x', 'node20'), 'name: x');
+  assert.strictEqual(withRuntime('runs:\n# note\n  using: node24\n', 'node20'), 'runs:\n# note\n  using: node20\n');
 });
 
 check('validate-action passes the shipped action.yml', () => {
@@ -117,11 +122,21 @@ check('engines.node is not below what our dependencies require', () => {
   // better-sqlite3 is a native module. On a Node it does not support it does not
   // throw, it segfaults, which reads as a phantom crash rather than a bad
   // install. Claiming a floor lower than any dependency's is how that happens.
+
+  // The floor of a range is the lowest major any of its `||` branches allows.
+  const floorOf = (range) => Math.min(...String(range).split('||').map((alt) => {
+    const m = alt.match(/\d+/);
+    return m ? Number(m[0]) : 0;
+  }));
+  assert.strictEqual(floorOf('>=22'), 22);
+  assert.strictEqual(floorOf('^22 || ^24'), 22);
+  assert.strictEqual(floorOf('>=20.11.0'), 20);
+
   const ours = require('../package.json').engines.node;
-  const floor = (spec) => Number(String(spec).replace(/[^\d.]/g, '').split('.')[0]);
   for (const dep of ['better-sqlite3']) {
-    const theirs = require(`${dep}/package.json`).engines.node;
-    assert.ok(floor(ours) >= floor(theirs), `package.json says node ${ours} but ${dep} needs ${theirs}`);
+    const theirs = require(`${dep}/package.json`).engines?.node;
+    if (!theirs) continue; // no declared floor is no constraint
+    assert.ok(floorOf(ours) >= floorOf(theirs), `package.json says node ${ours} but ${dep} needs ${theirs}`);
   }
 });
 

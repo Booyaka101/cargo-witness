@@ -46,9 +46,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--daemon` die with exit 139 and an empty stderr, which reads as a phantom
   crash rather than as an unsupported Node. Reproduced here on Node 20.20.2 and
   clean on 24.21.0. The field now says `>=22` and a test fails if it ever drops
-  below what a dependency needs again. The Action itself is unaffected either
-  way: `dist/action.js` contains no native module, which is why it runs on
-  node24 at all.
+  below what a dependency needs again. `CONTRIBUTING.md` and `docs/LAUNCH.md`
+  repeated the `18+` claim and now say 22. The Action itself is unaffected
+  either way: `dist/action.js` contains no native module, which is why it runs
+  on node24 at all.
 
 ### Added
 
@@ -64,8 +65,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Internal
 
-- `validate:action` now runs in CI. It was a local-only script before, so the
-  schema check never gated a pull request.
+- `action.yml` is now schema-checked on every pull request. Nothing validated it
+  before. The test suite drives `scripts/validate-action.js` directly, so the
+  check lives with the rest of the assertions rather than as a separate CI step
+  that could only ever repeat them.
 
 ## [1.5.0] - 2026-09-08
 
