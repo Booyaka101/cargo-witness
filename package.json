@@ -48,7 +48,7 @@
     "url": "https://github.com/Booyaka101/cargo-witness/issues"
   },
   "engines": {
-    "node": ">=22"
+    "node": "^22.22.2 || ^24.15.0 || >=26.0.0"
   },
   "dependencies": {
     "better-sqlite3": "^13.0.1",

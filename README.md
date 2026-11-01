@@ -265,6 +265,10 @@ This removes the false positive **without** hiding a real injection: an injected
 
 ## Install / run
 
+The CLI requires Node 22.22.2+ on the Node 22 line, Node 24.15.0+ on the
+Node 24 line, or Node 26+. These are node-notifier 12's supported runtimes;
+older Node 22/24 patch releases are no longer supported.
+
 ```bash
 npm install          # installs deps (better-sqlite3 native build)
 
