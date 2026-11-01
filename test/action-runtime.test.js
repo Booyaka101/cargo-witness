@@ -160,6 +160,9 @@ check('engines.node is not below what our dependencies require', () => {
   assert.strictEqual(floorOf('>=20.11.0'), 20);
 
   const ours = require('../package.json').engines.node;
+  // require(esm) needs the notifier's patch-level floor, not just Node 22.
+  assert.strictEqual(ours, require('node-notifier/package.json').engines.node);
+  assert.strictEqual(typeof require('node-notifier').notify, 'function');
   for (const dep of ['better-sqlite3']) {
     const theirs = require(`${dep}/package.json`).engines?.node;
     if (!theirs) continue; // no declared floor is no constraint
